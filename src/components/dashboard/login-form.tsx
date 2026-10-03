@@ -4,6 +4,7 @@ import { useCallback, useState, useSyncExternalStore } from 'react'
 import { startAuthentication } from '@simplewebauthn/browser'
 import { useRouter } from 'next/navigation'
 import { requestChallengeAction, verifyChallengeAction } from '@/app/login/actions'
+import { detectWallet, walletDetectionMessage } from '@/lib/wallet/detect'
 
 /**
  * Console sign-in.
@@ -27,6 +28,7 @@ type Stage = 'idle' | 'requesting' | 'signing' | 'verifying' | 'error'
 export function LoginPanel({ wallet }: { wallet: string }) {
   const [stage, setStage] = useState<Stage>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const router = useRouter()
 
   /**
@@ -46,23 +48,49 @@ export function LoginPanel({ wallet }: { wallet: string }) {
 
   const signWithWallet = useCallback(async () => {
     setError(null)
+    setNotice(null)
     setStage('requesting')
     try {
       const challenge = await requestChallengeAction()
 
-      // The extension API is injected by the wallet, so it is absent from TS's DOM lib
-      // and only present when an extension is actually installed.
-      const freighter = (window as unknown as {
-        freighter?: { signMessage: (msg: string, opts?: unknown) => Promise<string> }
-        }).freighter
-      if (!freighter) {
+      // Poll for the extension rather than reading window.freighter once. Content scripts
+      // inject asynchronously, so a single read races the injector and reports an
+      // installed wallet as missing. This also tells "not installed" apart from "installed
+      // but locked", which need opposite instructions.
+      const detection = await detectWallet()
+
+      if (detection.kind !== 'ready') {
         setStage('error')
-        setError('No Stellar wallet extension found. Install Freighter, or use a passkey below.')
+        setError(walletDetectionMessage(detection))
         return
       }
 
+      // Advisory only: the challenge is network-agnostic, but a wallet sitting on the
+      // wrong network is worth surfacing before the user reasons about a failure.
+      if (detection.network && !/testnet/i.test(detection.network)) {
+        setNotice(
+          `${detection.provider.name} is on the ${detection.network} network. This environment is Testnet, so switch the wallet before sending payments.`,
+        )
+      }
+
       setStage('signing')
-      const signature = await freighter.signMessage(challenge.challenge)
+      let signature: string
+      try {
+        signature = await detection.provider.signMessage(challenge.challenge)
+      } catch (err) {
+        // A locked wallet and a user-cancelled prompt both reject here. They are the two
+        // likely reasons a correctly-installed wallet fails at exactly this step.
+        const detail = err instanceof Error ? err.message : String(err)
+        setStage('error')
+        setError(
+          /lock|unlock|password|not\s*logged|connect/i.test(detail)
+            ? `${detection.provider.name} is locked. Unlock the extension and try again.`
+            : /reject|cancel|denied/i.test(detail)
+              ? 'Request rejected in your wallet.'
+              : `${detection.provider.name} could not sign the challenge. ${detail || 'Please try again.'}`,
+        )
+        return
+      }
 
       setStage('verifying')
       const result = await verifyChallengeAction({
@@ -150,6 +178,12 @@ export function LoginPanel({ wallet }: { wallet: string }) {
             Use a passkey
           </button>
         </>
+      ) : null}
+
+      {notice ? (
+        <p role="status" className="rounded-control border border-review/30 bg-review-soft px-3 py-2 text-[13px] leading-relaxed text-review">
+          {notice}
+        </p>
       ) : null}
 
       {error ? (
