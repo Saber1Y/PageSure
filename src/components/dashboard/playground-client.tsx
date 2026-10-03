@@ -47,24 +47,44 @@ export function PlaygroundClient({ services }: { services: ServiceOption[] }) {
   const [query, setQuery] = useState('stellar agentic payments')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<RunResult | null>(null)
+  const [transportError, setTransportError] = useState<string | null>(null)
 
   const selected = services.find((s) => s.slug === slug)
 
   async function run() {
     setBusy(true)
     setResult(null)
-    const response = await fetch('/api/playground', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        slug,
-        search: slug === 'summarize' ? { text: query } : { q: query },
-      }),
-    })
-    const body = (await response.json()) as RunResult
-    setResult(body)
-    setBusy(false)
+    setTransportError(null)
+    try {
+      const response = await fetch('/api/playground', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slug,
+          search: slug === 'summarize' ? { text: query } : { q: query },
+        }),
+      })
+      // A gateway fault can answer with HTML or an empty body, so parsing is guarded:
+      // an unparseable response must not be reported as a successful run.
+      const body = (await response.json().catch(() => null)) as RunResult | null
+      if (!body) {
+        setTransportError(
+          `The gateway returned a response that was not valid JSON (HTTP ${response.status}).`,
+        )
+        return
+      }
+      setResult(body)
+    } catch {
+      setTransportError('Could not reach the playground API. Check your connection and try again.')
+    } finally {
+      // Always release the button, or a dropped connection leaves it stuck on "Running".
+      setBusy(false)
+    }
   }
+
+  // Server-reported failure (blocked, unfunded, trustline) and client-side transport
+  // failure are shown together but never conflated.
+  const failure = transportError ?? result?.error ?? null
 
   if (services.length === 0) {
     return (
@@ -133,6 +153,27 @@ export function PlaygroundClient({ services }: { services: ServiceOption[] }) {
 
       {/* Waterfall and result */}
       <div className="flex flex-col gap-4">
+        {/* Concise status for assistive tech. The lifecycle list and JSON body stay out
+            of the live region so a result is announced, not read out line by line. */}
+        <p role="status" aria-live="polite" className="sr-only">
+          {busy
+            ? 'Running paid request'
+            : transportError
+              ? 'Request failed before reaching the gateway'
+              : result
+                ? `Request finished with ${result.steps.length} lifecycle steps${result.ok ? '' : ', the gateway reported an error'}`
+                : ''}
+        </p>
+
+        {failure ? (
+          <div role="alert" className="rounded-card border border-line bg-surface px-5 py-4">
+            <p className="text-[13px] font-medium text-block">
+              {transportError ? 'Request did not reach the gateway' : 'Request failed'}
+            </p>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2">{failure}</p>
+          </div>
+        ) : null}
+
         <div className="rounded-card border border-line bg-surface">
           <div className="border-b border-line px-5 py-3.5">
             <h2 className="text-[15px] font-medium tracking-tight">Request lifecycle</h2>
@@ -156,6 +197,13 @@ export function PlaygroundClient({ services }: { services: ServiceOption[] }) {
                   progress events.
                 </p>
               )}
+            </div>
+          ) : result.steps.length === 0 ? (
+            <div className="px-5 py-10">
+              <p className="text-[13px] text-ink-3">
+                The request was rejected before any payment step ran. The gateway response
+                below carries the reason.
+              </p>
             </div>
           ) : (
             <ol className="divide-y divide-line">
@@ -185,7 +233,7 @@ export function PlaygroundClient({ services }: { services: ServiceOption[] }) {
             {result.headers['x-pagesure-request-id'] ? (
               <a
                 href={`/requests/${result.headers['x-pagesure-request-id']}`}
-                className="text-[13px] text-accent hover:underline"
+                className="inline-flex items-center rounded-control px-2 py-1 text-[13px] text-accent hover:underline"
               >
                 Inspect the recorded policy decision
               </a>
