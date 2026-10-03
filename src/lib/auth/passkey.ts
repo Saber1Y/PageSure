@@ -5,6 +5,7 @@ import {
   verifyRegistrationResponse,
 } from '@simplewebauthn/server'
 import type {
+  AuthenticatorTransport,
   VerifyAuthenticationResponseOpts,
   VerifyRegistrationResponseOpts,
 } from '@simplewebauthn/server'
@@ -43,6 +44,27 @@ function rpConfig(): { rpID: string; rpName: string; origin: string } {
   return { rpID: host, rpName: process.env.PROVIDER_LABEL ?? 'PageSure', origin }
 }
 
+/**
+ * The transports column holds a JSON array as text, but WebAuthn wants a real sequence of
+ * strings. Handing it the raw JSON string fails the whole ceremony with "The provided value
+ * cannot be converted to a sequence", which breaks `excludeCredentials` and therefore
+ * blocks registering any SECOND passkey for a user who already has one.
+ *
+ * Decoding is deliberately total: an absent, malformed or unexpected shape degrades to an
+ * empty list, because transports are a hint the authenticator may ignore, whereas throwing
+ * here would lock the operator out of adding another device.
+ */
+function decodeTransports(raw: string | null | undefined): AuthenticatorTransport[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((t): t is AuthenticatorTransport => typeof t === 'string')
+  } catch {
+    return []
+  }
+}
+
 export async function passkeyRegistrationOptions(
   user: { id: string; name: string },
   existing: { credentialId: string; transports: string }[] = [],
@@ -62,7 +84,7 @@ export async function passkeyRegistrationOptions(
     // row for one device.
     excludeCredentials: existing.map((c) => ({
       id: c.credentialId,
-      transports: c.transports as never,
+      transports: decodeTransports(c.transports),
     })),
     authenticatorSelection: {
       residentKey: 'required',
@@ -95,6 +117,8 @@ export async function verifyPasskeyRegistration(params: {
     credentialId: credential.id,
     publicKey: Buffer.from(credential.publicKey).toString('base64url'),
     counter: credential.counter,
+    // Already a decoded AuthenticatorTransport[] from the library, not the JSON column,
+    // so this one passes straight through.
     transports: credential.transports ?? [],
     deviceType: credentialDeviceType,
     backedUp: credentialBackedUp,
@@ -109,7 +133,7 @@ export async function passkeyAuthenticationOptions(credentials: { credentialId: 
     // login. The browser offers whichever passkey it holds for this RP ID, and the
     // server resolves the user from the credential id that comes back.
     allowCredentials: credentials.length
-      ? credentials.map((c) => ({ id: c.credentialId, transports: c.transports as never }))
+      ? credentials.map((c) => ({ id: c.credentialId, transports: decodeTransports(c.transports) }))
       : undefined,
     userVerification: 'required',
   })
@@ -131,7 +155,7 @@ export async function verifyPasskeyAuthentication(params: {
       id: params.credential.id,
       publicKey: Buffer.from(params.credential.publicKey, 'base64url'),
       counter: params.credential.counter,
-      transports: (params.credential.transports ? JSON.parse(params.credential.transports) : undefined) as never,
+      transports: decodeTransports(params.credential.transports),
     },
   })
 
