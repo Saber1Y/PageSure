@@ -16,7 +16,10 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/lib/db/migrate.ts",
     "db:seed": "tsx src/lib/db/seed.ts",
-    "mpp:audit": "tsx scripts/audit-mpp-api.ts"
+    "mpp:audit": "tsx scripts/audit-mpp-api.ts",
+    "contracts:build": "bash scripts/build-contracts.sh --build",
+    "channels:deploy": "tsx scripts/deploy-contracts.ts",
+    "keys:generate": "tsx scripts/generate-keys.ts"
   },
   "dependencies": {
     "@stellar/mpp": "0.7.1",
