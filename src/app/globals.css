@@ -69,7 +69,7 @@
      both themes rather than as glowing white slabs on a dark canvas. */
   --color-plate: #f7f7f8;
 
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, 'SF Mono', monospace;
 
   --radius-control: 8px;
