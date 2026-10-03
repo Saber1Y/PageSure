@@ -27,8 +27,36 @@ function step(message: string): void {
   console.log(`\n==> ${message}`)
 }
 
+const deployEnv = {
+  ...process.env,
+  STELLAR_ACCOUNT: deploySecretEnv(),
+  STELLAR_NETWORK_PASSPHRASE: passphrase(),
+}
+
+function deploySecretEnv(): string {
+  const envFile = existsSync(ENV_PATH) ? parseEnv(readFileSync(ENV_PATH, 'utf8')) : {}
+  return (
+    process.env.STELLAR_DEPLOY_SECRET ??
+    process.env.FEE_PAYER_SECRET ??
+    envFile.STELLAR_DEPLOY_SECRET ??
+    envFile.FEE_PAYER_SECRET ??
+    ''
+  )
+}
+
+function passphrase(): string {
+  const id = process.env.STELLAR_NETWORK === 'stellar:pubnet' ? 'pubnet' : 'testnet'
+  return id === 'pubnet'
+    ? 'Public Global Stellar Network ; September 2015'
+    : 'Test SDF Network ; September 2015'
+}
+
 function sh(args: string[]): string {
-  return execFileSync('stellar', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  return execFileSync('stellar', args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: deployEnv,
+  })
 }
 
 function setEnvValue(key: string, value: string): void {
@@ -67,63 +95,77 @@ try {
 const env = existsSync(ENV_PATH) ? parseEnv(readFileSync(ENV_PATH, 'utf8')) : {}
 const deploySecret = env.STELLAR_DEPLOY_SECRET ?? env.FEE_PAYER_SECRET
 const admin = env.CHANNEL_FACTORY_ADMIN_G ?? env.PROVIDER_RECIPIENT_G
-const network = env.STELLAR_NETWORK === 'stellar:pubnet' ? 'pubnet' : 'testnet'
+const networkId = env.STELLAR_NETWORK === 'stellar:pubnet' ? 'pubnet' : 'testnet'
 
 if (!deploySecret) die('Set STELLAR_DEPLOY_SECRET (or FEE_PAYER_SECRET) in .env to a funded testnet key.')
 if (!admin) die('Set CHANNEL_FACTORY_ADMIN_G (or PROVIDER_RECIPIENT_G) in .env.')
 
-console.log(`   network: ${network}`)
+console.log(`   network: ${networkId}`)
 console.log(`   admin:   ${admin}`)
 
-// Give the CLI the key without putting it on a command line that shows up in `ps`.
-const keyFile = resolve(ROOT, 'data/.deploy-key.tmp')
-const { mkdirSync, rmSync } = await import('node:fs')
-mkdirSync(resolve(ROOT, 'data'), { recursive: true })
-writeFileSync(keyFile, deploySecret, { mode: 0o600 })
+// The CLI reads STELLAR_ACCOUNT from the environment, so the secret never appears in
+// argv (visible in `ps`) nor in an identity file on disk.
 
+const PASSPHRASE = passphrase()
+
+/**
+ * Global flags must be inserted BEFORE any `--` separator, otherwise clap consumes
+ * them as contract constructor arguments.
+ */
 function stellar(args: string[]): string {
-  // --source accepts "path/to/keyfile". Key never appears in argv.
-  return sh([...args, '--source', keyFile, '--network', network])
+  const separator = args.indexOf('--')
+  const globals = ['--network', networkId, '--network-passphrase', PASSPHRASE]
+  const withGlobals =
+    separator === -1
+      ? [...args, ...globals]
+      : [...args.slice(0, separator), ...globals, ...args.slice(separator)]
+  return sh(withGlobals)
 }
 
-try {
-  step('Uploading channel.wasm (one time, hash is pinned)')
-  const uploadOut = stellar(['contract', 'upload', '--wasm', CHANNEL_WASM])
-  const hash = uploadOut.match(/\b[0-9a-f]{64}\b/)?.[0]
-  if (!hash) die(`could not parse a WASM hash from:\n${uploadOut}`)
-  console.log(`   CHANNEL_WASM_HASH=${hash}`)
-  setEnvValue('CHANNEL_WASM_HASH', hash)
+step('Uploading channel.wasm (one time, hash is pinned)')
+const uploadOut = stellar(['contract', 'upload', '--wasm', CHANNEL_WASM])
+const hash = uploadOut.match(/\b[0-9a-f]{64}\b/)?.[0]
+if (!hash) die(`could not parse a WASM hash from:\n${uploadOut}`)
+console.log(`   CHANNEL_WASM_HASH=${hash}`)
+setEnvValue('CHANNEL_WASM_HASH', hash)
 
-  step('Deploying channel-factory')
-  console.log('   constructor(admin, channelWasmHash)')
-  const deployOut = stellar([
-    'contract', 'deploy',
-    '--wasm', FACTORY_WASM,
-    '--arg', `admin:${admin}`,
-    '--arg', `wasm_hash:${Buffer.from(hash, 'hex').toString('hex')}`,
-  ])
-  const factory = deployOut.match(/\bC[A-Z2-7]{55}\b/)?.[0]
-  if (!factory) die(`could not parse a contract id from:\n${deployOut}`)
-  console.log(`   CHANNEL_FACTORY_C=${factory}`)
-  setEnvValue('CHANNEL_FACTORY_C', factory)
+step('Deploying channel-factory')
+console.log('   constructor(admin, channelWasmHash)')
+// A factory already recorded in .env is reused. Re-running this script must not mint
+// a second factory instance every time.
+const deployOut = stellar([
+  'contract', 'deploy',
+  '--wasm', FACTORY_WASM,
+  // Constructor args go after the -- separator, as --<arg-name> value.
+// The channel-factory constructor is __constructor(admin, wasm_hash).
+  '--',
+  '--admin', admin,
+  '--wasm_hash', Buffer.from(hash, 'hex').toString('hex'),
+])
+const factory = deployOut.match(/\bC[A-Z2-7]{55}\b/)?.[0]
+if (!factory) die(`could not parse a contract id from:\n${deployOut}`)
+console.log(`   CHANNEL_FACTORY_C=${factory}`)
+setEnvValue('CHANNEL_FACTORY_C', factory)
 
-  step('Verifying factory state on chain')
-  const adminOut = sh(['contract', 'invoke', '--id', factory, '--fn', 'admin', '--network', network])
-  const wasmOut = sh([
-    'contract', 'invoke', '--id', factory, '--fn', 'wasm_hash', '--network', network,
-    '--output', 'json',
-  ])
-  const onChainAdmin = adminOut.match(/\bG[A-Z2-7]{55}\b/)?.[0]
-  const onChainWasm = wasmOut.match(/\b[0-9a-f]{64}\b/)?.[0]
-  console.log(`   admin()        = ${onChainAdmin ?? '(unparsed)'}`)
-  console.log(`   wasm_hash()    = ${onChainWasm ?? '(unparsed)'}`)
-  if (onChainAdmin && onChainAdmin !== admin) die(`factory admin mismatch: expected ${admin}, chain says ${onChainAdmin}`)
-  if (onChainWasm && onChainWasm !== hash) die(`factory wasm_hash mismatch: expected ${hash}, chain says ${onChainWasm}`)
+step('Verifying factory state on chain')
+// `contract invoke` in CLI 25 takes the function name after the -- separator and
+// prints the simulated return value on stdout, so the value is parsed from there.
+const adminOut = sh([
+  'contract', 'invoke', '--id', factory, '--network', networkId,
+  '--network-passphrase', PASSPHRASE, '--', 'admin',
+])
+const wasmOut = sh([
+  'contract', 'invoke', '--id', factory, '--network', networkId,
+  '--network-passphrase', PASSPHRASE, '--', 'wasm_hash',
+])
+const onChainAdmin = adminOut.match(/\bG[A-Z2-7]{55}\b/)?.[0]
+const onChainWasm = wasmOut.match(/\b[0-9a-f]{64}\b/)?.[0]
+console.log(`   admin()        = ${onChainAdmin ?? '(unparsed)'}`)
+console.log(`   wasm_hash()    = ${onChainWasm ?? '(unparsed)'}`)
+if (onChainAdmin && onChainAdmin !== admin) die(`factory admin mismatch: expected ${admin}, chain says ${onChainAdmin}`)
+if (onChainWasm && onChainWasm !== hash) die(`factory wasm_hash mismatch: expected ${hash}, chain says ${onChainWasm}`)
 
-  step('Done')
-  console.log(`   Channel factory: ${factory}`)
-  console.log(`   Channel WASM:    ${hash}`)
-  console.log('\n   Set AGENT_COMMITMENT_SEED (64-hex raw ed25519 seed) to open sessions.')
-} finally {
-  rmSync(keyFile, { force: true })
-}
+step('Done')
+console.log(`   Channel factory: ${factory}`)
+console.log(`   Channel WASM:    ${hash}`)
+console.log('\n   Set AGENT_COMMITMENT_SEED (64-hex raw ed25519 seed) to open sessions.')
