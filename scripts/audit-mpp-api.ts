@@ -75,14 +75,14 @@ for (const name of MPP_EXPORTS_REQUIRED) {
 }
 
 section('MPP network constants')
-const net = (mpp as Record<string, unknown>).STELLAR_TESTNET
+const net = (mpp as unknown as Record<string, unknown>).STELLAR_TESTNET
 check("STELLAR_TESTNET === 'stellar:testnet'", net === 'stellar:testnet', String(net))
 
 section('base-unit conversion round-trip')
 // NOTE: in the published 0.7.1 these are STRING in / STRING out (they differ from
 // the unreleased `main` branch, which returns bigint). Verified, not assumed.
-const toBase = (mpp as Record<string, (v: string, d: number) => string>).toBaseUnits
-const fromBase = (mpp as Record<string, (v: string, d: number) => string>).fromBaseUnits
+const toBase = (mpp as unknown as Record<string, (v: string, d: number) => string>).toBaseUnits
+const fromBase = (mpp as unknown as Record<string, (v: string, d: number) => string>).fromBaseUnits
 if (typeof toBase === 'function' && typeof fromBase === 'function') {
   check("toBaseUnits('0.01', 7) === '100000'", toBase('0.01', 7) === '100000', toBase('0.01', 7))
   check("toBaseUnits('1', 7) === '10000000'", toBase('1', 7) === '10000000', toBase('1', 7))
