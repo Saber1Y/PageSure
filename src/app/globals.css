@@ -6,8 +6,11 @@
  * Design read: developer/fintech payments console for engineers and provider
  * operators. Quiet, dense, evidence-first. Explicitly NOT a crypto trading terminal.
  *
- * Dials: DESIGN_VARIANCE 3 (predictable grid), MOTION_INTENSITY 2 (functional only),
- * VISUAL_DENSITY 7 (cockpit for numbers, breathing room between blocks).
+ * Dials are per-surface, because the two surfaces are deliberately different products:
+ *  - Provider console: VARIANCE 3 (predictable grid), MOTION 2 (functional only),
+ *    DENSITY 7 (cockpit for numbers, breathing room between blocks).
+ *  - Marketing: VARIANCE 7 (asymmetric, five distinct layout families), MOTION 5
+ *    (fluid CSS: staggered trace reveal, scroll-driven section reveals), DENSITY 3.
  *
  * Rules this file enforces:
  *  - ONE accent (cobalt). Semantic colours are reserved strictly for policy decisions
@@ -17,6 +20,8 @@
  *  - No pure #000 or #fff. Canvas and ink are both slightly cool off-values.
  *  - Theme is locked at the page level; sections never invert.
  *  - One radius scale: controls 8px, cards 12px, pills full.
+ *  - Text sitting on a filled accent resolves through --color-on-accent, never a
+ *    hardcoded white, because the accent inverts between themes.
  *  - Every animation is gated behind prefers-reduced-motion.
  */
 
@@ -38,6 +43,17 @@
   --color-accent-hover: #2743b8;
   --color-accent-soft: #eef1fd;
   --color-accent-ink: #1d3399;
+
+  /*
+   * Text colour that sits ON a filled accent surface.
+   *
+   * This has to be a token rather than a hardcoded `text-white`, because the accent is
+   * inverted between themes: dark cobalt in light mode, light cobalt in dark mode.
+   * White on dark cobalt is ~7:1, but white on the light dark-mode accent is ~2.3:1,
+   * which fails WCAG AA outright. Inverting the text with the accent keeps a filled
+   * button at roughly 7:1 in both themes.
+   */
+  --color-on-accent: #ffffff;
 
   /* Decision semantics. Only ever used for allow / block / review. */
   --color-allow: #0e7c4a;
@@ -89,6 +105,9 @@
     --color-accent-hover: #849bff;
     --color-accent-soft: #1a2140;
     --color-accent-ink: #a8b9ff;
+
+    /* Near-black ink on the light dark-mode accent. See the light-mode note above. */
+    --color-on-accent: #0a0c11;
 
     --color-allow: #4ade9b;
     --color-allow-soft: #12281f;
@@ -184,6 +203,43 @@
     animation: trace-reveal 520ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
   }
 
+  /*
+   * Scroll-driven section reveal, using native CSS scroll timelines rather than a JS
+   * scroll listener. No library, no main-thread work, and it cannot jank because
+   * nothing in JS is running per frame.
+   *
+   * The reason it exists: the page is a narrative (a request arrives, gets checked,
+   * gets paid, gets delivered, gets refused) and the hero trace already plays that
+   * sequence in order. Revealing later sections as they enter continues the same
+   * reading order instead of dumping the whole page at once.
+   *
+   * Browsers without `animation-timeline` never apply the animation, so the fallback
+   * is the finished state: fully visible. That is the correct degradation, so the
+   * properties are set to their end state first and only the supported path animates.
+   */
+  .reveal {
+    opacity: 1;
+    transform: none;
+  }
+
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .reveal {
+        opacity: 0;
+        transform: translateY(18px);
+        animation: reveal-up 1ms linear both;
+        animation-timeline: view();
+        /* Complete the fade inside the first 45% of the element's entry, which is
+           roughly 100px of scroll. The first attempt used `entry 8% cover 34%` and
+           measurement showed headings sitting at 19-52% opacity while already 175px
+           into the viewport, which reads as a rendering fault rather than as motion.
+           Finishing early keeps every element legible the moment it is meaningfully
+           on screen. */
+        animation-range: entry 0% entry 45%;
+      }
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .skeleton {
       animation: none;
@@ -195,6 +251,13 @@
       transform: none;
       animation: trace-fade 200ms ease forwards;
     }
+  }
+}
+
+@keyframes reveal-up {
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
