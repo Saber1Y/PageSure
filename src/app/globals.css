@@ -23,6 +23,8 @@
  *  - Text sitting on a filled accent resolves through --color-on-accent, never a
  *    hardcoded white, because the accent inverts between themes.
  *  - Every animation is gated behind prefers-reduced-motion.
+ *  - Hover affordances are gated behind (hover: hover) and (pointer: fine), so a touch
+ *    device never latches a hover state on tap.
  */
 
 @theme {
@@ -37,6 +39,15 @@
   --color-ink-2: #3d3f45;
   --color-ink-3: #6b6e76;
   --color-ink-4: #979aa2;
+
+  /*
+   * Brand body colour. Spec is rgb(86, 90, 97) = #565A61.
+   *
+   * Measured 6.42:1 on --color-canvas and 6.76:1 on --color-surface, so it clears WCAG
+   * AA for body text with room to spare. This is the colour every marketing paragraph
+   * uses. Dark mode overrides it with a lifted hue-matched value; see the note there.
+   */
+  --color-body: #565a61;
 
   /* Single accent. Cobalt: high contrast, professional, not AI-purple. */
   --color-accent: #2f53e0;
@@ -72,8 +83,34 @@
   --font-sans: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, 'SF Mono', monospace;
 
+  /*
+   * Body copy scale.
+   *
+   * The brand spec calls for Space Grotesk at 18px / 400 / 29.25px leading, which is a
+   * 1.625 ratio. That is a deliberately generous reading size for marketing prose and it
+   * is what the landing page uses for every paragraph.
+   *
+   * It is NOT the global body size. The provider console is a data cockpit: the same
+   * 18px applied to a policy table row would halve the rows a screen can show and force
+   * horizontal scrolling on every hash column. The console keeps its compact scale and
+   * reads --font-sans, so it still gets the new typeface. Marketing scales up, the
+   * console stays dense. That split is the whole point of the two design directions.
+   */
+  --text-marketing-body: 18px;
+  --text-marketing-body--line-height: 29.25px;
+  --text-marketing-body--font-weight: 400;
+
   --radius-control: 8px;
   --radius-card: 12px;
+
+  /*
+   * Motion curves. Never the CSS built-ins for UI work: `ease-in` starts slow, which
+   * reads as lag because the first few frames are exactly where the user is watching
+   * hardest. Everything that enters or responds uses --ease-out.
+   */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /*
@@ -100,6 +137,16 @@
     --color-ink-2: #c3c6cc;
     --color-ink-3: #93979f;
     --color-ink-4: #6d7178;
+
+    /*
+     * Dark counterpart for the brand body colour #565A61.
+     *
+     * The brand spec's body colour cannot be reused here. #565A61 against the dark
+     * canvas measures 2.61:1, which fails WCAG AA at any text size. The hue is preserved
+     * and the lightness lifted until it clears AA body contrast, so the page reads as one
+     * system in both themes instead of one theme having unreadable prose.
+     */
+    --color-body: #a2a7b0;
 
     --color-accent: #6b86ff;
     --color-accent-hover: #849bff;
@@ -138,6 +185,25 @@
     font-family: var(--font-sans);
     /* Tabular numerals everywhere so money columns line up. */
     font-variant-numeric: tabular-nums;
+    /*
+     * Space Grotesk's metrics differ from the UI sans it replaced, so the root size is
+     * nudged down slightly. At an identical px size the geometric bowls read larger and
+     * looser than the previous face, and 16px looked oversized next to the mono.
+     */
+    font-size: 15.5px;
+    line-height: 1.55;
+  }
+
+  /*
+   * Marketing prose. The one place the brand's 18px / 400 / 29.25px spec is applied
+   * verbatim, as a utility rather than a global, so the console stays dense.
+   */
+  .prose-brand {
+    font-size: var(--text-marketing-body);
+    line-height: var(--text-marketing-body--line-height);
+    font-weight: var(--text-marketing-body--font-weight);
+    color: var(--color-body);
+    letter-spacing: -0.003em;
   }
 
   /* Every figure, hash, address and identifier is mono. */
@@ -195,12 +261,142 @@
   /*
    * Hero trace rows reveal in sequence. Each row carries its own animation-delay from
    * the component, so the stagger costs nothing on the main thread. Only opacity and
-   * transform animate.
+   * transform animate, both compositor-friendly.
    */
   .trace-row {
     opacity: 0;
     transform: translateY(4px);
-    animation: trace-reveal 520ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
+    animation: trace-reveal 520ms var(--ease-out) forwards;
+  }
+
+  /*
+   * Hover affordances.
+   *
+   * Gated behind (hover: hover) and (pointer: fine). On touch, :hover fires on tap and
+   * then sticks, so an ungated scale or lift leaves the element visibly stuck in its
+   * hover state until something else is tapped.
+   */
+  @media (hover: hover) and (pointer: fine) {
+    .lift:hover {
+      transform: translateY(-3px);
+      border-color: var(--color-line-strong);
+    }
+  }
+
+  .lift {
+    transition:
+      transform 240ms var(--ease-out),
+      border-color 240ms var(--ease-out),
+      box-shadow 240ms var(--ease-out);
+  }
+
+  /* Card lift with a soft shadow, for surfaces that have room for one. */
+  @media (hover: hover) and (pointer: fine) {
+    .lift-shadow:hover {
+      transform: translateY(-4px);
+      border-color: var(--color-line-strong);
+      box-shadow:
+        0 1px 2px rgb(12 13 15 / 0.04),
+        0 12px 28px -12px rgb(12 13 15 / 0.14);
+    }
+  }
+
+  .lift-shadow {
+    transition:
+      transform 260ms var(--ease-out),
+      border-color 260ms var(--ease-out),
+      box-shadow 260ms var(--ease-out);
+  }
+
+  /* Row highlight for lists that read as targets rather than as text. */
+  @media (hover: hover) and (pointer: fine) {
+    .row-hover:hover {
+      background-color: var(--color-surface);
+    }
+  }
+
+  .row-hover {
+    transition: background-color 160ms var(--ease-out);
+  }
+
+  /*
+   * Press feedback. A pressable surface must confirm it was heard, and scale is the
+   * cheapest confirmation that survives on a trackpad. 0.97 is small enough to read as
+   * physical rather than as a state change.
+   */
+  .press {
+    transition:
+      transform 140ms var(--ease-out),
+      background-color 140ms var(--ease-out),
+      border-color 140ms var(--ease-out),
+      color 140ms var(--ease-out),
+      opacity 140ms var(--ease-out);
+  }
+
+  .press:active {
+    transform: scale(0.97);
+  }
+
+  /* Underline that wipes in from the leading edge on hover. */
+  .underline-wipe {
+    position: relative;
+  }
+
+  .underline-wipe::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -2px;
+    height: 1px;
+    background-color: currentColor;
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 260ms var(--ease-out);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .underline-wipe:hover::after {
+      transform: scaleX(1);
+    }
+  }
+
+  .underline-wipe:focus-visible::after {
+    transform: scaleX(1);
+  }
+
+  /*
+   * Marquee.
+   *
+   * Linear is the correct easing here and the only place it is used: a constant-speed
+   * scroll is the one motion where an ease curve would be wrong, because an eased
+   * marquee visibly accelerates and decelerates at the loop seam.
+   *
+   * The track holds exactly two identical units and shifts by 50%, so the wrap point
+   * lands on a copy of the current frame and the loop has no visible seam. The shift is
+   * transform only, so it stays on the compositor.
+   *
+   * ServiceMarquee guarantees one unit is at least as wide as the container before this
+   * animation is ever applied, so the loop cannot run out of names mid-cycle.
+   */
+  @media (prefers-reduced-motion: no-preference) {
+    .animate-marquee {
+      animation: marquee 42s linear infinite;
+    }
+  }
+
+  /*
+   * Soft horizontal fade at the marquee's edges, so names enter and leave rather than
+   * being sliced by the container boundary.
+   */
+  .mask-edges {
+    mask-image: linear-gradient(
+      to right,
+      transparent 0,
+      black 48px,
+      black calc(100% - 48px),
+      transparent 100%
+    );
   }
 
   /*
@@ -237,6 +433,56 @@
            on screen. */
         animation-range: entry 0% entry 45%;
       }
+
+      /*
+       * Clip-path reveal for media and framed artifacts.
+       *
+       * The wipe reads as the image being uncovered left to right, which suits a product
+       * where a response is progressively unblocked. clip-path is compositor-friendly, so
+       * this stays off the main thread the same way the opacity reveal does.
+       */
+      .reveal-clip {
+        clip-path: inset(0 0 100% 0);
+        animation: reveal-clip 1ms linear both;
+        animation-timeline: view();
+        animation-range: entry 0% entry 55%;
+      }
+    }
+  }
+
+  /*
+   * Page-load entrance.
+   *
+   * Runs once, on mount, on the hero only. It uses `both` fill so the element holds its
+   * start state during the delay: without it, every hero element would flash at full
+   * opacity and then jump back to hidden, which is the classic stagger bug.
+   *
+   * Delays step by 70ms, which is inside the 30-80ms band where a cascade reads as
+   * intentional rather than as slow. Nothing here blocks interaction.
+   */
+  @media (prefers-reduced-motion: no-preference) {
+    .enter {
+      opacity: 0;
+      animation: enter-up 700ms var(--ease-out) both;
+    }
+
+    .enter-1 {
+      animation-delay: 40ms;
+    }
+    .enter-2 {
+      animation-delay: 110ms;
+    }
+    .enter-3 {
+      animation-delay: 180ms;
+    }
+    .enter-4 {
+      animation-delay: 250ms;
+    }
+    .enter-5 {
+      animation-delay: 320ms;
+    }
+    .enter-6 {
+      animation-delay: 390ms;
     }
   }
 
@@ -251,6 +497,49 @@
       transform: none;
       animation: trace-fade 200ms ease forwards;
     }
+
+    /* Entrance resolves to its final state with no travel. */
+    .enter {
+      opacity: 1;
+      animation: none;
+      transform: none;
+    }
+
+    /*
+     * The marquee stops entirely rather than fast-forwarding to its end state. A 42s
+     * animation collapsed to 0.01ms would jump the track to translateX(-33%) and park
+     * the names off-screen, leaving an empty strip.
+     */
+    .animate-marquee {
+      animation: none;
+      transform: none;
+    }
+  }
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes enter-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes reveal-clip {
+  to {
+    clip-path: inset(0 0 0 0);
   }
 }
 
