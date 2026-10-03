@@ -214,7 +214,7 @@ export default function LandingPage() {
       <section className="mx-auto w-full max-w-[1400px] flex-1 px-6 pt-16 pb-20 lg:grid lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1fr)] lg:items-center lg:gap-16 lg:pt-24 lg:pb-32">
         <div>
           <p className="enter enter-1 label-xs">Machine payments on Stellar</p>
-          <h1 className="enter enter-2 mt-6 max-w-[13ch] text-[clamp(2.75rem,6.2vw,4.75rem)] leading-[0.98] font-medium tracking-[-0.035em]">
+          <h1 className="enter enter-2 text-balance mt-6 max-w-[19rem] text-[clamp(2.75rem,6.2vw,4.75rem)] leading-[0.98] font-medium tracking-[-0.035em] md:max-w-[33rem]">
             Let machines pay for APIs.
           </h1>
           <p className="prose-brand enter enter-3 mt-7 max-w-[40ch]">
@@ -272,10 +272,9 @@ export default function LandingPage() {
       */}
       <section id="lifecycle" className="scroll-mt-20 border-t border-line">
         <div className="mx-auto max-w-[1400px] px-6 py-24 md:py-32">
-          <div className="reveal max-w-[24ch] md:max-w-[26ch]">
-            <h2 className="text-[clamp(2rem,4.4vw,3.25rem)] leading-[1.02] font-medium tracking-[-0.03em]">
-              Software already acts on its own. Paying for what it needs is still a manual
-              step.
+          <div className="reveal max-w-[20rem] md:max-w-[36rem]">
+            <h2 className="text-balance text-[clamp(2rem,4.4vw,3.25rem)] leading-[1.02] font-medium tracking-[-0.03em]">
+              Acting is easy. Getting paid is the hard part.
             </h2>
           </div>
           <p className="prose-brand reveal mt-7 max-w-[52ch]">
@@ -322,8 +321,8 @@ Authorization: Payment id="01J…", intent="charge"`}</pre>
       */}
       <section className="border-t border-line">
         <div className="mx-auto max-w-[1400px] px-6 py-24 md:py-32">
-          <div className="reveal max-w-[20ch] md:max-w-[22ch]">
-            <h2 className="text-[clamp(2rem,4.4vw,3.25rem)] leading-[1.02] font-medium tracking-[-0.03em]">
+          <div className="reveal max-w-[20rem] md:max-w-[26rem]">
+            <h2 className="text-balance text-[clamp(2rem,4.4vw,3.25rem)] leading-[1.02] font-medium tracking-[-0.03em]">
               What PageSure adds to an endpoint
             </h2>
           </div>
@@ -425,8 +424,8 @@ X-Pagesure-Decision: allow`}
       */}
       <section className="border-t border-line">
         <div className="mx-auto max-w-[1400px] px-6 py-24 md:py-32">
-          <div className="reveal max-w-[20ch] md:max-w-[22ch]">
-            <h2 className="text-[clamp(2rem,4.4vw,3.25rem)] leading-[1.02] font-medium tracking-[-0.03em]">
+          <div className="reveal max-w-[20rem] md:max-w-[26rem]">
+            <h2 className="text-balance text-[clamp(2rem,4.4vw,3.25rem)] leading-[1.02] font-medium tracking-[-0.03em]">
               A refused request costs the payer nothing.
             </h2>
           </div>
@@ -464,8 +463,8 @@ X-Pagesure-Decision: allow`}
       */}
       <section className="border-t border-line bg-surface">
         <div className="mx-auto max-w-[1400px] px-6 py-24 md:py-32">
-          <div className="reveal mx-auto max-w-[30ch] text-center md:max-w-[34ch]">
-            <h2 className="text-[clamp(2rem,4.4vw,3.25rem)] leading-[1.02] font-medium tracking-[-0.03em]">
+          <div className="reveal mx-auto max-w-[20rem] text-center md:max-w-[30rem]">
+            <h2 className="text-balance text-[clamp(2rem,4.4vw,3.25rem)] leading-[1.02] font-medium tracking-[-0.03em]">
               Give your service a price and a policy.
             </h2>
             <p className="prose-brand mx-auto mt-7 max-w-[48ch]">
