@@ -5,7 +5,13 @@ import { useCallback, useState, useSyncExternalStore } from 'react'
 import { startAuthentication } from '@simplewebauthn/browser'
 import { useRouter } from 'next/navigation'
 import { requestChallengeAction, verifyChallengeAction } from '@/app/login/actions'
-import { detectWallet, probeWallets, walletDetectionMessage } from '@/lib/wallet/detect'
+import {
+  detectWallet,
+  probeWallets,
+  promptWalletAccess,
+  signChallenge,
+  walletDetectionMessage,
+} from '@/lib/wallet/detect'
 
 /**
  * Console sign-in.
@@ -17,8 +23,8 @@ import { detectWallet, probeWallets, walletDetectionMessage } from '@/lib/wallet
  *   Passkey  WebAuthn. Registered from an already-signed-in session, so this button only
  *            does something once a passkey exists.
  *
- * The wallet path needs an extension (Freighter, Albedo) and is the only way to create
- * the very first session. The passkey path is the everyday path afterwards.
+ * The wallet path needs the Freighter extension and is the only way to create the very
+ * first session. The passkey path is the everyday path afterwards.
  *
  * Failure messages are deliberately uniform. Telling an attacker whether a wallet was
  * wrong, a challenge was stale, or a rate limit had tripped is free information.
@@ -56,10 +62,9 @@ export function LoginPanel({ wallet }: { wallet: string }) {
     try {
       const challenge = await requestChallengeAction()
 
-      // Poll for the extension rather than reading window.freighter once. Content scripts
-      // inject asynchronously, so a single read races the injector and reports an
-      // installed wallet as missing. This also tells "not installed" apart from "installed
-      // but locked", which need opposite instructions.
+      // Ask the extension through the official API, which talks to it over postMessage
+      // rather than reading the legacy window.freighter global. The call is what makes the
+      // wallet prompt, so there is nothing to race and nothing to poll for.
       const detection = await detectWallet()
 
       if (detection.kind !== 'ready') {
@@ -69,32 +74,43 @@ export function LoginPanel({ wallet }: { wallet: string }) {
         return
       }
 
-      // Advisory only: the challenge is network-agnostic, but a wallet sitting on the
-      // wrong network is worth surfacing before the user reasons about a failure.
+      // Advisory only: a challenge signature is network-agnostic, but a wallet on the wrong
+      // network is worth saying out loud if the attempt then fails.
       if (detection.network && !/testnet/i.test(detection.network)) {
         setNotice(
-          `${detection.provider.name} is on the ${detection.network} network. This environment is Testnet, so switch the wallet before sending payments.`,
+          `Freighter is on the ${detection.network} network. This environment is Testnet, so switch the wallet before sending payments.`,
         )
       }
 
-      setStage('signing')
-      let signature: string
-      try {
-        signature = await detection.provider.signMessage(challenge.challenge)
-      } catch (err) {
-        // A locked wallet and a user-cancelled prompt both reject here. They are the two
-        // likely reasons a correctly-installed wallet fails at exactly this step.
-        const detail = err instanceof Error ? err.message : String(err)
+      // Explicitly request site access before signing. An extension that has never been asked
+      // to talk to this origin will not prompt at all, which is exactly the "dApp is
+      // installed but nothing happens" case.
+      setStage('requesting')
+      const access = await promptWalletAccess()
+      if (!access.ok) {
         setStage('error')
         setError(
-          /lock|unlock|password|not\s*logged|connect/i.test(detail)
-            ? `${detection.provider.name} is locked. Unlock the extension and try again.`
-            : /reject|cancel|denied/i.test(detail)
-              ? 'Request rejected in your wallet.'
-              : `${detection.provider.name} could not sign the challenge. ${detail || 'Please try again.'}`,
+          /reject|cancel|denied/i.test(access.error)
+            ? 'Access request rejected in your wallet.'
+            : `Freighter did not grant access. ${access.error}`.trim(),
         )
         return
       }
+
+      setStage('signing')
+      const signed = await signChallenge(challenge.challenge)
+      if (!signed.ok) {
+        setStage('error')
+        setError(
+          /lock|unlock|password|not\s*logged|not\s*allow|permission/i.test(signed.error)
+            ? `Freighter is locked or has not been allowed here. ${signed.error}`
+            : /reject|cancel|denied/i.test(signed.error)
+              ? 'Request rejected in your wallet.'
+              : signed.error || 'Freighter could not sign the challenge.',
+        )
+        return
+      }
+      const signature = signed.signature
 
       setStage('verifying')
       const result = await verifyChallengeAction({
@@ -163,7 +179,13 @@ export function LoginPanel({ wallet }: { wallet: string }) {
         disabled={busy}
         className="flex w-full items-center justify-center gap-2 rounded-control bg-accent px-4 py-3 text-[14px] font-medium text-on-accent transition-colors hover:bg-accent-hover active:translate-y-px disabled:opacity-50"
       >
-        {stage === 'signing' || stage === 'verifying' ? 'Verifying signature' : 'Sign in with wallet'}
+        {stage === 'requesting'
+          ? 'Approve in wallet…'
+          : stage === 'signing'
+            ? 'Waiting for signature…'
+            : stage === 'verifying'
+              ? 'Verifying signature…'
+              : 'Sign in with wallet'}
       </button>
 
       {passkeyReady ? (
@@ -210,20 +232,9 @@ export function LoginPanel({ wallet }: { wallet: string }) {
             </div>
             <div className="flex gap-2">
               <dt className="shrink-0 text-ink-4">providers</dt>
-              <dd>
-                {probe.globals.length
-                  ? probe.globals
-                      .map((g) => `${g.key}: ${g.methods.join(', ')}`)
-                      .join(' · ')
-                  : 'none'}
-              </dd>
+              <dd>{probe.globals.length ? probe.globals.join(', ') : 'none'}</dd>
             </div>
-            {probe.unrecognised.length ? (
-              <div className="flex gap-2">
-                <dt className="shrink-0 text-ink-4">other</dt>
-                <dd className="break-all">{probe.unrecognised.join(', ')}</dd>
-              </div>
-            ) : null}
+
           </dl>
         </details>
       ) : null}

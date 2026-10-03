@@ -1,138 +1,172 @@
 'use client'
 
+import { getAddress, getNetworkDetails, isConnected, requestAccess, signMessage } from '@stellar/freighter-api'
+
 /**
- * Browser-side Stellar wallet detection.
+ * Browser-side Stellar wallet access.
  *
- * A wallet extension injects itself into the page as `window.freighter` (or
- * `window.albedo`). Three things make naive detection wrong:
+ * Freighter is NOT reached through `window.freighter`. Current Freighter talks to the page
+ * with window.postMessage:
  *
- *   1. Injection is ASYNCHRONOUS. A content script may land after the app's own bundle
- *      runs, so a single read at click time can miss an extension that is present and
- *      working. Everything here polls for a short window instead.
+ *   page    -> { source: "FREIGHTER_EXTERNAL_MSG_REQUEST", messageId, type: "REQUEST_..." }
+ *   Freighter -> { source: "FREIGHTER_EXTERNAL_MSG_RESPONSE", messagedId, ...payload }
  *
- *   2. "Not injected" is not one state. An extension can be installed but LOCKED, or
- *      injected without being granted access to this site, or on the wrong network. Each
- *      needs a different instruction, and telling someone to install an extension they
- *      already have is the worst possible answer.
+ * `window.freighter` survives only as a legacy shortcut, and @stellar/freighter-api prefers
+ * it when present and falls back to the messaging path when it is not. Reading the global
+ * directly therefore only works on older builds: on a current Freighter the global can be
+ * absent while the extension is installed, unlocked and perfectly capable of signing, and
+ * the dApp looks broken because nothing is ever sent to prompt it.
  *
- *   3. Detection must not be able to sign anything by itself. This module only ever
- *      returns a handle to the provider the browser already put on the page.
+ * So every call here goes through the official API. That also means each call is async by
+ * design, which is the point: it is what makes the wallet prompt instead of us guessing
+ * whether it is there.
  *
  * Kept out of src/lib/auth/* on purpose: that module is server-only (it reads
  * process.env), and this one runs in the browser.
  */
 
-export type WalletProviderName = 'Freighter' | 'Albedo' | 'xBull'
-
-export interface WalletProvider {
-  name: WalletProviderName
-  signMessage: (message: string) => Promise<string>
-  getPublicKey?: () => Promise<{ publicKey: string; error?: string }>
-  getNetwork?: () => Promise<{ network: string; error?: string }>
-}
-
 export type WalletDetection =
-  /** Injected and usable. publicKey/network may still be unknown if probing failed. */
-  | { kind: 'ready'; provider: WalletProvider; publicKey: string | null; network: string | null }
-  /** Injected, but the wallet is locked and cannot answer. */
-  | { kind: 'locked'; provider: WalletProvider; detail: string }
-  /** Nothing injected within the wait window. */
+  /** Extension reachable and answering. */
+  | { kind: 'ready'; network: string | null }
+  /** Reachable, but refusing because it is locked or has not granted this site access. */
+  | { kind: 'locked'; detail: string }
+  /** Reachable, but refused for some other reason (declined prompt, unknown failure). */
+  | { kind: 'error'; detail: string }
+  /** Nothing answered the request. */
   | { kind: 'absent' }
 
-/** Wallets this app can drive, in preference order. */
-const PROVIDERS: { name: WalletProviderName; key: string }[] = [
-  { name: 'Freighter', key: 'freighter' },
-  { name: 'Albedo', key: 'albedo' },
-  { name: 'xBull', key: 'xbull' },
-]
-
-function readProvider(name: WalletProviderName, key: string): WalletProvider | null {
-  if (typeof window === 'undefined') return null
-  const bag = window as unknown as Record<string, unknown>
-  const raw = bag[key]
-  if (!raw || typeof raw !== 'object') return null
-  const api = raw as Record<string, unknown>
-
-  const signMessage = api.signMessage
-  if (typeof signMessage !== 'function') return null
-
-  return {
-    name,
-    // Freighter and xBull both sign UTF-8 strings and return base64. Albedo returns
-    // base64url without the trailing padding; both decode fine server-side, so no
-    // normalisation is done here that would risk altering the signed bytes.
-    signMessage: (message: string) => (signMessage as (m: string) => Promise<string>).call(raw, message),
-    getPublicKey:
-      typeof api.getPublicKey === 'function'
-        ? () => (api.getPublicKey as () => Promise<{ publicKey: string; error?: string }>).call(raw)
-        : undefined,
-    getNetwork:
-      typeof api.getNetwork === 'function'
-        ? () => (api.getNetwork as () => Promise<{ network: string; error?: string }>).call(raw)
-        : undefined,
+function detailOf(error: unknown): string {
+  if (typeof error === 'string' && error) return error
+  if (error && typeof error === 'object' && 'error' in error) {
+    const e = (error as { error?: unknown }).error
+    if (typeof e === 'string' && e) return e
   }
+  return ''
+}
+
+/** Freighter reports a locked or not-yet-connected wallet through these wordings. */
+function looksUnavailable(text: string): boolean {
+  return /lock|unlock|password|not\s*logged|not\s*allow|not\s*connect|permission/i.test(text)
 }
 
 /**
- * Poll for an injected provider.
+ * Ask the extension whether it is reachable, and whether it will actually talk to us.
  *
- * `timeoutMs` is a ceiling on how long to keep waiting for injection, not a fixed delay:
- * the loop returns as soon as a provider appears.
+ * `isConnected()` has a short built-in timeout for the status probe, so this does not hang
+ * when no extension is listening.
  */
-async function awaitProvider(timeoutMs: number): Promise<WalletProvider | null> {
-  const deadline = Date.now() + timeoutMs
-  for (;;) {
-    for (const p of PROVIDERS) {
-      const found = readProvider(p.name, p.key)
-      if (found) return found
+export async function detectWallet(): Promise<WalletDetection> {
+  if (typeof window === 'undefined') return { kind: 'absent' }
+
+  let reachable = false
+  try {
+    // Two attempts, not a poll loop. The extension's listener can miss the first probe:
+    // postMessage only reaches listeners that exist at post time, and an extension still
+    // booting registers its listener just after the page did. A second attempt, spaced out,
+    // catches that race without the unbounded polling the old global-read version needed.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 700))
+      const res = await isConnected()
+      if (res?.isConnected) {
+        reachable = true
+        break
+      }
     }
-    if (Date.now() >= deadline) return null
-    await new Promise((r) => setTimeout(r, 120))
+  } catch {
+    return { kind: 'absent' }
   }
-}
+  if (!reachable) return { kind: 'absent' }
 
-/** Freighter/Albedo report a locked wallet through a rejected or errored call. */
-function looksLocked(text: string): boolean {
-  return /lock|unlock|password|not\s*logged|connect/i.test(text)
-}
-
-/**
- * Detect a usable wallet extension.
- *
- * `injectTimeoutMs` should be short enough to feel instant on a real click (the provider
- * is normally there on the first check) but long enough to cover a slow content script.
- */
-export async function detectWallet(injectTimeoutMs = 1500): Promise<WalletDetection> {
-  const provider = await awaitProvider(injectTimeoutMs)
-  if (!provider) return { kind: 'absent' }
-
-  // An injected provider that cannot report a public key is almost always locked. Asking
-  // is what separates "locked" from "ready", and it is also the only reliable way to tell
-  // the user which of the two problems they have.
+  // Reachable is not the same as usable: an extension that is locked, or that has not been
+  // granted this origin, answers the status probe but refuses the account request.
   let publicKey: string | null = null
-  if (provider.getPublicKey) {
-    try {
-      const res = await provider.getPublicKey()
-      if (res?.publicKey) publicKey = res.publicKey
-      else if (res?.error) return { kind: 'locked', provider, detail: res.error }
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err)
-      if (looksLocked(detail)) return { kind: 'locked', provider, detail }
-      // Some other failure: still allow the attempt, since signMessage may work.
+  try {
+    const res = await getAddress()
+    publicKey = res?.address ?? null
+    if (res?.error) {
+      // Distinguish "locked / not allowed" from every other refusal. Reporting a declined
+      // prompt as "your wallet is locked" sends the user to fix the wrong thing.
+      const detail = detailOf(res.error)
+      return looksUnavailable(detail)
+        ? { kind: 'locked', detail: detail || 'The wallet has not been connected to this site yet.' }
+        : { kind: 'error', detail: detail || 'The wallet refused the request.' }
     }
+  } catch (err) {
+    const detail = detailOf(err)
+    if (looksUnavailable(detail)) return { kind: 'locked', detail }
   }
 
   let network: string | null = null
-  if (provider.getNetwork) {
-    try {
-      const res = await provider.getNetwork()
-      if (res?.network) network = res.network
-    } catch {
-      // Network reporting is advisory here; the challenge is network-agnostic.
-    }
+  try {
+    const res = await getNetworkDetails()
+    if (res?.network) network = res.network
+  } catch {
+    // Advisory only: a challenge signature is network-agnostic.
   }
 
-  return { kind: 'ready', provider, publicKey, network }
+  return { kind: 'ready', network, ...(publicKey ? {} : {}) }
+}
+
+/**
+ * Prompt the wallet for site access.
+ *
+ * Without this the extension has never been asked to talk to this origin, which is the
+ * reason a dApp can be fully installed and still show no prompt at all. Safe to call when
+ * access already exists.
+ */
+export async function promptWalletAccess(): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res = await requestAccess()
+    if (res?.error) return { ok: false, error: detailOf(res.error) }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: detailOf(err) || 'Could not reach the wallet extension.' }
+  }
+}
+
+export type SignResult = { ok: true; signature: string } | { ok: false; error: string }
+
+/**
+ * Base64-encode a signature given as bytes.
+ *
+ * Browser-native on purpose: this module is bundled for the client, where `Buffer` does not
+ * exist. The server verifier expects standard base64 either way.
+ */
+function toBase64(value: unknown): string {
+  if (typeof value === 'string') return value
+  const bytes =
+    value instanceof Uint8Array
+      ? value
+      : value instanceof ArrayBuffer
+        ? new Uint8Array(value)
+        : ArrayBuffer.isView(value)
+          ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+          : null
+  if (!bytes) return ''
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  return btoa(bin)
+}
+
+/** Ask the wallet to sign the server-issued challenge. */
+export async function signChallenge(message: string): Promise<SignResult> {
+  try {
+    const res = await signMessage(message)
+    if (res?.error) {
+      return { ok: false, error: detailOf(res.error) }
+    }
+    const signature = res?.signedMessage
+    if (!signature) {
+      return { ok: false, error: 'The wallet returned no signature.' }
+    }
+    // Freighter returns a base64 string. Older builds returned raw bytes, so normalise both
+    // shapes to the base64 the server-side verifier expects.
+    const encoded = toBase64(signature)
+    if (!encoded) return { ok: false, error: 'The wallet returned an unreadable signature.' }
+    return { ok: true, signature: encoded }
+  } catch (err) {
+    return { ok: false, error: detailOf(err) || 'Could not reach the wallet extension.' }
+  }
 }
 
 /**
@@ -144,52 +178,38 @@ export async function detectWallet(injectTimeoutMs = 1500): Promise<WalletDetect
 export function walletDetectionMessage(detection: WalletDetection): string {
   switch (detection.kind) {
     case 'locked':
-      return `${detection.provider.name} is installed but locked. Open the extension, unlock it, then try again.`
+      return `Freighter is installed but not ready: ${detection.detail} Unlock it and allow this site, then try again.`
+    case 'error':
+      return /reject|cancel|denied|declin/i.test(detection.detail)
+        ? `Freighter declined the request: ${detection.detail}`
+        : `Freighter could not be used: ${detection.detail}`
     case 'absent':
-      return 'No Stellar wallet detected. If Freighter is installed: unlock it, then allow it on this site using the puzzle-piece icon in the address bar, and reload this page.'
+      return 'No Stellar wallet detected. If Freighter is installed, unlock it, allow it on this site using the puzzle-piece icon in the address bar, then reload this page.'
     case 'ready':
-      return detection.publicKey
-        ? `${detection.provider.name} is ready.`
-        : `${detection.provider.name} is ready.`
+      return 'Freighter is ready.'
   }
 }
 
 /**
- * A snapshot of what the page can actually see, for when detection fails.
+ * A snapshot of what the page can see, for when detection fails.
  *
- * "No wallet detected" is not actionable on its own: the extension can be installed, unlocked
- * and rendering its own UI into the page while its provider global is still missing, and the
- * fix differs completely between those cases. Rather than guess from the outside, surface
- * the facts.
+ * "No wallet detected" is not actionable on its own, so the facts are worth showing: the
+ * origin the page is really on, and whether any wallet global exists at all (which tells us
+ * whether this is a legacy-global path or the postMessage path).
  *
  * Reading a global can throw (some extensions define throwing getters), so every access is
  * guarded: a probe must never be the thing that breaks the login page.
  */
 export interface WalletProbe {
   origin: string
-  globals: { key: string; methods: string[] }[]
-  /** Wallet-shaped globals we do not support, in case the provider moved or was renamed. */
-  unrecognised: string[]
-}
-
-const INTERESTING_METHODS = ['signMessage', 'getPublicKey', 'getNetwork', 'connect', 'signTransaction']
-
-function safeMethodNames(value: unknown): string[] {
-  try {
-    if (!value || (typeof value !== 'object' && typeof value !== 'function')) return []
-    const bag = value as Record<string, unknown>
-    return INTERESTING_METHODS.filter((m) => typeof bag[m] === 'function')
-  } catch {
-    return []
-  }
+  globals: string[]
 }
 
 export function probeWallets(): WalletProbe {
-  const probe: WalletProbe = { origin: 'unavailable', globals: [], unrecognised: [] }
+  const probe: WalletProbe = { origin: 'unavailable', globals: [] }
   if (typeof window === 'undefined') return probe
   probe.origin = window.location?.origin ?? 'unknown'
 
-  const known = new Set(PROVIDERS.map((p) => p.key))
   const keys: string[] = []
   try {
     // Own and inherited keys: some extensions hang the provider off a prototype.
@@ -202,19 +222,11 @@ export function probeWallets(): WalletProbe {
   const walletish = /freighter|albedo|xbull|wallet|stellar|phantom|soroban|keplr/i
   for (const key of [...new Set(keys)]) {
     if (!walletish.test(key)) continue
-    let value: unknown
     try {
-      value = (window as unknown as Record<string, unknown>)[key]
+      if ((window as unknown as Record<string, unknown>)[key]) probe.globals.push(key)
     } catch {
-      continue
+      // A throwing getter says nothing useful; ignore it.
     }
-    if (!value) continue
-    const methods = safeMethodNames(value)
-    if (known.has(key)) {
-      if (methods.length) probe.globals.push({ key, methods })
-    } else {
-      probe.unrecognised.push(key)
-  }
   }
   return probe
 }
