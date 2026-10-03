@@ -29,19 +29,29 @@ export async function seed(): Promise<{ created: boolean; services: number }> {
   const target = db()
 
   // ---- provider account ---------------------------------------------------
+  // The env var is the source of truth. Re-running the seed re-syncs the stored
+  // credential and label, so rotating PROVIDER_ADMIN_PASSWORD actually takes effect
+  // instead of silently leaving the old hash in place.
+  const password = process.env.PROVIDER_ADMIN_PASSWORD
+  if (!password) throw new Error('PROVIDER_ADMIN_PASSWORD is not set')
+  const displayName = process.env.PROVIDER_LABEL ?? 'PageSure Demo Provider'
+
   const existingUser = target.select().from(users).where(eq(users.email, DEMO_EMAIL)).get()
   if (existingUser) {
-    console.log('provider account already exists')
+    target
+      .update(users)
+      .set({ passwordHash: hashPassword(password), displayName })
+      .where(eq(users.id, existingUser.id))
+      .run()
+    console.log(`synced provider account ${DEMO_EMAIL} from PROVIDER_ADMIN_PASSWORD`)
   } else {
-    const password = process.env.PROVIDER_ADMIN_PASSWORD
-    if (!password) throw new Error('PROVIDER_ADMIN_PASSWORD is not set')
     target
       .insert(users)
       .values({
         id: uid('usr'),
         email: DEMO_EMAIL,
         passwordHash: hashPassword(password),
-        displayName: process.env.PROVIDER_LABEL ?? 'PageSure Demo Provider',
+        displayName,
         role: 'owner',
         createdAt: Date.now(),
       })
