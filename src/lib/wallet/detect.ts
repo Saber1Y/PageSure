@@ -153,3 +153,68 @@ export function walletDetectionMessage(detection: WalletDetection): string {
         : `${detection.provider.name} is ready.`
   }
 }
+
+/**
+ * A snapshot of what the page can actually see, for when detection fails.
+ *
+ * "No wallet detected" is not actionable on its own: the extension can be installed, unlocked
+ * and rendering its own UI into the page while its provider global is still missing, and the
+ * fix differs completely between those cases. Rather than guess from the outside, surface
+ * the facts.
+ *
+ * Reading a global can throw (some extensions define throwing getters), so every access is
+ * guarded: a probe must never be the thing that breaks the login page.
+ */
+export interface WalletProbe {
+  origin: string
+  globals: { key: string; methods: string[] }[]
+  /** Wallet-shaped globals we do not support, in case the provider moved or was renamed. */
+  unrecognised: string[]
+}
+
+const INTERESTING_METHODS = ['signMessage', 'getPublicKey', 'getNetwork', 'connect', 'signTransaction']
+
+function safeMethodNames(value: unknown): string[] {
+  try {
+    if (!value || (typeof value !== 'object' && typeof value !== 'function')) return []
+    const bag = value as Record<string, unknown>
+    return INTERESTING_METHODS.filter((m) => typeof bag[m] === 'function')
+  } catch {
+    return []
+  }
+}
+
+export function probeWallets(): WalletProbe {
+  const probe: WalletProbe = { origin: 'unavailable', globals: [], unrecognised: [] }
+  if (typeof window === 'undefined') return probe
+  probe.origin = window.location?.origin ?? 'unknown'
+
+  const known = new Set(PROVIDERS.map((p) => p.key))
+  const keys: string[] = []
+  try {
+    // Own and inherited keys: some extensions hang the provider off a prototype.
+    for (const k in window) keys.push(k)
+    keys.push(...Object.getOwnPropertyNames(window))
+  } catch {
+    return probe
+  }
+
+  const walletish = /freighter|albedo|xbull|wallet|stellar|phantom|soroban|keplr/i
+  for (const key of [...new Set(keys)]) {
+    if (!walletish.test(key)) continue
+    let value: unknown
+    try {
+      value = (window as unknown as Record<string, unknown>)[key]
+    } catch {
+      continue
+    }
+    if (!value) continue
+    const methods = safeMethodNames(value)
+    if (known.has(key)) {
+      if (methods.length) probe.globals.push({ key, methods })
+    } else {
+      probe.unrecognised.push(key)
+  }
+  }
+  return probe
+}

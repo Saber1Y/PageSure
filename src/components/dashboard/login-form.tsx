@@ -1,10 +1,11 @@
 'use client'
 
+import type { WalletProbe } from '@/lib/wallet/detect'
 import { useCallback, useState, useSyncExternalStore } from 'react'
 import { startAuthentication } from '@simplewebauthn/browser'
 import { useRouter } from 'next/navigation'
 import { requestChallengeAction, verifyChallengeAction } from '@/app/login/actions'
-import { detectWallet, walletDetectionMessage } from '@/lib/wallet/detect'
+import { detectWallet, probeWallets, walletDetectionMessage } from '@/lib/wallet/detect'
 
 /**
  * Console sign-in.
@@ -29,6 +30,7 @@ export function LoginPanel({ wallet }: { wallet: string }) {
   const [stage, setStage] = useState<Stage>('idle')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [probe, setProbe] = useState<WalletProbe | null>(null)
   const router = useRouter()
 
   /**
@@ -49,6 +51,7 @@ export function LoginPanel({ wallet }: { wallet: string }) {
   const signWithWallet = useCallback(async () => {
     setError(null)
     setNotice(null)
+    setProbe(null)
     setStage('requesting')
     try {
       const challenge = await requestChallengeAction()
@@ -62,6 +65,7 @@ export function LoginPanel({ wallet }: { wallet: string }) {
       if (detection.kind !== 'ready') {
         setStage('error')
         setError(walletDetectionMessage(detection))
+        setProbe(probeWallets())
         return
       }
 
@@ -190,6 +194,38 @@ export function LoginPanel({ wallet }: { wallet: string }) {
         <p role="alert" className="rounded-control border border-danger/30 bg-danger/5 px-3 py-2 text-[13px] leading-relaxed text-danger">
           {error}
         </p>
+      ) : null}
+
+      {/* Shown only after a failed attempt. "No wallet detected" is unactionable on its own:
+          an extension can be rendering its own UI into this page while its provider global
+          is still missing, and those need opposite fixes. Reporting what the page can
+          actually see turns a guess into a fact. */}
+      {probe ? (
+        <details className="rounded-control border border-line bg-surface-2 px-3 py-2 text-[12px] text-ink-3">
+          <summary className="cursor-pointer select-none">Connection details</summary>
+          <dl className="mt-2 space-y-1 font-mono text-[11px] leading-relaxed">
+            <div className="flex gap-2">
+              <dt className="shrink-0 text-ink-4">origin</dt>
+              <dd className="break-all">{probe.origin}</dd>
+            </div>
+            <div className="flex gap-2">
+              <dt className="shrink-0 text-ink-4">providers</dt>
+              <dd>
+                {probe.globals.length
+                  ? probe.globals
+                      .map((g) => `${g.key}: ${g.methods.join(', ')}`)
+                      .join(' · ')
+                  : 'none'}
+              </dd>
+            </div>
+            {probe.unrecognised.length ? (
+              <div className="flex gap-2">
+                <dt className="shrink-0 text-ink-4">other</dt>
+                <dd className="break-all">{probe.unrecognised.join(', ')}</dd>
+              </div>
+            ) : null}
+          </dl>
+        </details>
       ) : null}
 
       <div className="flex flex-col gap-1.5 border-t border-line pt-4">
