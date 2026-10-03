@@ -162,8 +162,13 @@ export function KeyValue({
 }) {
   return (
     <div className="flex items-baseline justify-between gap-6 border-b border-line py-2.5 last:border-b-0">
-      <span className="text-[13px] text-ink-3">{k}</span>
-      <span className={`text-[13px] text-ink ${mono ? 'mono' : ''} text-right`}>{v}</span>
+      <span className="shrink-0 text-[13px] text-ink-3">{k}</span>
+      {/* min-w-0 with break-all: a Stellar contract ID or tx hash is one long token with
+          no break opportunity, so without this the row's min-content width widens the card
+          and pushes the whole page past the viewport on a phone. */}
+      <span className={`min-w-0 break-all text-[13px] text-ink ${mono ? 'mono' : ''} text-right`}>
+        {v}
+      </span>
     </div>
   )
 }
