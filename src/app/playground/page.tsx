@@ -1,5 +1,6 @@
 import { serviceRollups } from '@/lib/metering/aggregates'
 import { PlaygroundClient } from '@/components/dashboard/playground-client'
+import { Brand } from '@/components/ui/brand'
 import { formatAmount } from '@/lib/money'
 import { USDC_SAC_TESTNET } from '@stellar/mpp'
 
@@ -13,11 +14,7 @@ export default function PlaygroundPage() {
     <div className="min-h-[100dvh]">
       <header className="border-b border-line">
         <div className="mx-auto flex h-16 max-w-[1400px] items-center justify-between px-6">
-          <div className="flex items-center gap-2">
-            <span className="inline-block size-2 rounded-full bg-accent" aria-hidden />
-            <span className="text-[15px] font-semibold tracking-tight">PageSure</span>
-            <span className="text-[13px] text-ink-3">Playground</span>
-          </div>
+          <Brand href="/" suffix="Playground" />
           <a href="/overview" className="text-[13px] text-ink-2 transition-colors hover:text-ink hover:underline">
             Provider console
           </a>

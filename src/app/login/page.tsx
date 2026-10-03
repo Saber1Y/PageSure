@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { sessionCookieName } from '@/lib/auth/session'
 import { Card } from '@/components/ui/primitives'
 import { LoginForm } from '@/components/dashboard/login-form'
+import { Brand } from '@/components/ui/brand'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,10 +15,7 @@ export default async function LoginPage() {
     <div className="flex min-h-[100dvh] items-center justify-center px-6 py-16">
       <div className="w-full max-w-sm">
         <div className="mb-8">
-          <div className="flex items-center gap-2">
-            <span className="inline-block size-2 rounded-full bg-accent" aria-hidden />
-            <span className="text-[15px] font-semibold tracking-tight">PageSure</span>
-          </div>
+          <Brand href="/" />
           <h1 className="mt-6 text-[26px] leading-tight font-medium tracking-tight">
             Provider console
           </h1>
