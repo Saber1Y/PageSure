@@ -68,6 +68,8 @@ export function findPresentedReview(reviewId: string, serviceId: string, wallet:
 export function resolveReview(input: {
   reviewId: string
   resolvedBy: string
+  /** Explicit. The note is audit text and is never interpreted. */
+  action: 'approve' | 'reject'
   note: string
   grantTtlMs?: number
 }): { ok: true; grantId: string | null; status: 'approved' | 'rejected' } | { ok: false; reason: string } {
@@ -86,7 +88,7 @@ export function resolveReview(input: {
 
   const now = Date.now()
 
-  if (input.note.trim().toLowerCase().startsWith('reject') || input.note.trim().toLowerCase() === 'reject') {
+  if (input.action === 'reject') {
     target
       .update(reviewDecisions)
       .set({ status: 'rejected', resolvedAt: now, resolvedBy: input.resolvedBy, note: input.note })
