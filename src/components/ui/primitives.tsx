@@ -5,6 +5,16 @@ import type { ReactNode } from 'react'
  * on the server render path. Interactive leaves live in components/dashboard.
  */
 
+/**
+ * Placeholder for a value that has not been set.
+ *
+ * This used to be an em-dash, which is the single most recognisable LLM typography
+ * tell and reads as broken punctuation rather than as an absent value. Words are
+ * clearer than any dash, and they survive a screen reader, a copy-paste, and a
+ * column of numbers.
+ */
+export const NOT_SET = 'not set'
+
 export function Card({
   children,
   className = '',
@@ -81,7 +91,7 @@ export function Metric({
 
 /** Truncate a Stellar address or hash for display without hiding that it is truncated. */
 export function short(value: string | null | undefined, head = 6, tail = 4): string {
-  if (!value) return '—'
+  if (!value) return NOT_SET
   if (value.length <= head + tail + 1) return value
   return `${value.slice(0, head)}…${value.slice(-tail)}`
 }
@@ -141,7 +151,15 @@ export function EmptyState({
   )
 }
 
-export function KeyValue({ k, v, mono = false }: { k: string; v: ReactNode; mono?: boolean }) {
+export function KeyValue({
+  k,
+  v,
+  mono = false,
+}: {
+  k: string
+  v: ReactNode
+  mono?: boolean
+}) {
   return (
     <div className="flex items-baseline justify-between gap-6 border-b border-line py-2.5 last:border-b-0">
       <span className="text-[13px] text-ink-3">{k}</span>
@@ -168,8 +186,11 @@ export function Button({
   const base =
     'inline-flex items-center justify-center rounded-control px-4 py-2 text-[13px] font-medium transition-colors active:translate-y-px disabled:pointer-events-none disabled:opacity-50'
   const styles = {
-    // Contrast: white text on cobalt is ~5.4:1, above WCAG AA for body text.
-    primary: 'bg-accent text-white hover:bg-accent-hover',
+    // Contrast: the filled button resolves its text through --color-on-accent, which
+    // flips with the theme because the accent inverts. Dark ink on the light dark-mode
+    // accent and white on the dark light-mode accent both land around 7:1. Hardcoding
+    // text-white here would put white on #6b86ff in dark mode, about 2.3:1.
+    primary: 'bg-accent text-on-accent hover:bg-accent-hover',
     ghost: 'border border-line-strong text-ink-2 hover:bg-surface-2 hover:text-ink',
   }[variant]
 
