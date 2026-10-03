@@ -49,6 +49,10 @@
 
   --color-neutral-soft: #eeeef0;
 
+  /* Light plate that generated illustrations sit on, so they read as intentional in
+     both themes rather than as glowing white slabs on a dark canvas. */
+  --color-plate: #f7f7f8;
+
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, 'SF Mono', monospace;
 
@@ -56,8 +60,20 @@
   --radius-card: 12px;
 }
 
+/*
+ * Dark mode.
+ *
+ * IMPORTANT: this must be plain CSS overriding the custom properties on :root, NOT an
+ * `@theme` block inside a media query.
+ *
+ * Tailwind v4's `@theme` is compile-time and emits to :root. Wrapping it in
+ * `@media (prefers-color-scheme: dark)` makes the dark values win at :root and strips
+ * the media query entirely, which silently pins the whole site to dark regardless of
+ * the user's preference. Overriding the generated custom properties directly is what
+ * actually works, because every utility resolves through `var(--color-*)`.
+ */
 @media (prefers-color-scheme: dark) {
-  @theme {
+  :root {
     --color-canvas: #0e0f11;
     --color-surface: #16181b;
     --color-surface-2: #1d1f23;
@@ -82,6 +98,13 @@
     --color-review-soft: #2a1f11;
 
     --color-neutral-soft: #212429;
+
+    /*
+     * The generated illustrations have near-white backgrounds. On a dark canvas they
+     * read as glowing white slabs, so the media plate stays light in both themes and the
+     * hairline border carries the edge instead.
+     */
+    --color-plate: #f6f6f7;
   }
 }
 
@@ -150,11 +173,41 @@
     animation: skeleton-sweep 1.4s ease-in-out infinite;
   }
 
+  /*
+   * Hero trace rows reveal in sequence. Each row carries its own animation-delay from
+   * the component, so the stagger costs nothing on the main thread. Only opacity and
+   * transform animate.
+   */
+  .trace-row {
+    opacity: 0;
+    transform: translateY(4px);
+    animation: trace-reveal 520ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .skeleton {
       animation: none;
       background: var(--color-surface-2);
     }
+
+    /* Collapse to a plain fade: keep the comprehension cue, drop the movement. */
+    .trace-row {
+      transform: none;
+      animation: trace-fade 200ms ease forwards;
+    }
+  }
+}
+
+@keyframes trace-reveal {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes trace-fade {
+  to {
+    opacity: 1;
   }
 }
 
