@@ -1,4 +1,3 @@
-import Image from 'next/image'
 import Link from 'next/link'
 import { count, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
@@ -6,6 +5,8 @@ import { requests, services, settlements } from '@/lib/db/schema'
 import { formatAmount } from '@/lib/money'
 import { Brand } from '@/components/ui/brand'
 import { TracePreview } from '@/components/marketing/trace-preview'
+import { WorkflowDiagram } from '@/components/marketing/workflow-diagram'
+import { Backdrop } from '@/components/marketing/backdrop'
 import { ServiceMarquee } from '@/components/marketing/service-marquee'
 
 export const dynamic = 'force-dynamic'
@@ -24,13 +25,21 @@ export const dynamic = 'force-dynamic'
  * tall x-height and holds its shape at scale; body copy uses the brand's 18px / 400 /
  * 29.25px spec via the .prose-brand utility. Data stays mono.
  *
- * Five sections, five different layout families, because a page where every band is a
- * two column split reads as a template no matter how well the type is set:
+ * Seven bands, six different layout families, because a page where every band is a two
+ * column split reads as a template no matter how well the type is set:
  *   1. asymmetric split hero, copy against a real component preview
- *   2. single measure editorial with one full width protocol artifact
- *   3. asymmetric bento, real imagery in two cells and a tinted panel in a third
- *   4. four column ledger row, no cards
- *   5. centred closing statement on a tinted full bleed band
+ *   2. live service marquee, measured so it never jitters
+ *   3. single measure editorial with one full width protocol artifact
+ *   4. centred workflow diagram, the payment lifecycle drawn as connectors and nodes
+ *   5. asymmetric bento, three capability cards and no filler imagery
+ *   6. four column ledger row, no cards
+ *   7. centred closing statement on a tinted full bleed band
+ *
+ * Display measures are written in rem, never ch. `ch` resolves against the font size of
+ * the element carrying the max-width, so a `max-w-[20ch]` on a wrapper div inherits the
+ * 16px body size and hands a 171px box to a 52px heading. That shipped once and wrapped
+ * four section headings onto five to ten lines at desktop; rem is absolute and cannot
+ * couple to a font it does not sit on.
  *
  * Motion rules, per the design engineering standard:
  *   - Nothing animates layout. Only transform, opacity and clip-path.
@@ -177,7 +186,8 @@ export default function LandingPage() {
   const serviceNames = liveServices()
 
   return (
-    <div className="flex min-h-[100dvh] flex-col">
+    <div className="relative z-10 flex min-h-[100dvh] flex-col">
+      <Backdrop />
       <header className="sticky top-0 z-20 border-b border-line bg-canvas/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-[1400px] items-center justify-between px-6">
           <Brand href="/" />
@@ -307,17 +317,38 @@ Authorization: Payment id="01J…", intent="charge"`}</pre>
       </section>
 
       {/*
-        3. Bento. Four pieces of content, four cells, so nothing strands.
+        3. The lifecycle as a graph.
 
-        Three of the four carry real visual variation: two illustrations and a tinted
-        panel. A bento of four white cards with type in them is the generic default this
-        layout is supposed to replace.
+        The refusal branch is the reason this section exists. Every payment gateway can
+        show a happy path; the thing an integrator actually needs to know is what happens
+        when the answer is no, so the diagram draws that branch explicitly and labels what
+        it costs the payer.
+      */}
+      <section className="border-t border-line">
+        <div className="mx-auto max-w-[1400px] px-6 py-24 md:py-32">
+          <div className="reveal max-w-[20rem] md:max-w-[26rem]">
+            <h2 className="text-balance text-[clamp(2rem,4.4vw,3.25rem)] leading-[1.02] font-medium tracking-[-0.03em]">
+              One request, five checkpoints.
+            </h2>
+          </div>
+          <p className="prose-brand reveal mt-7 max-w-[52ch]">
+            Policy decides before a challenge is ever written. An allowed request settles
+            before the upstream response is released, and a blocked one never moves the
+            payer.
+          </p>
 
-        Row one is taller than row two, and the wide cells alternate sides, so the grid
-        has a rhythm instead of a repeating left image right text stripe.
+          <div className="reveal mt-14">
+            <WorkflowDiagram />
+          </div>
+        </div>
+      </section>
 
-        The illustrations reveal on a clip-path wipe, which reads as the frame being
-        uncovered. Cards lift on hover.
+      {/*
+        4. Bento. Three pieces of content, three cells.
+
+        The illustration that used to sit here is gone. The lifecycle diagram above now
+        carries that job with something that describes the product rather than decorating
+        it, and three cards beat four once one of them was only there to fill a grid.
       */}
       <section className="border-t border-line">
         <div className="mx-auto max-w-[1400px] px-6 py-24 md:py-32">
@@ -331,20 +362,7 @@ Authorization: Payment id="01J…", intent="charge"`}</pre>
             upstream we wired up to prove it works.
           </p>
 
-          <div className="mt-16 grid gap-4 lg:grid-cols-3 lg:grid-rows-[1.1fr_1fr]">
-            <figure className="reveal-clip lift overflow-hidden rounded-card border border-line bg-plate lg:col-span-2">
-              <div className="relative aspect-[16/10] w-full">
-                <Image
-                  src="/media/channel-convergence.webp"
-                  alt="Many thin request paths converging through one node into a single line, many machine payments resolving to one settlement"
-                  fill
-                  sizes="(max-width: 1024px) 100vw, 66vw"
-                  priority
-                  className="object-cover"
-                />
-              </div>
-            </figure>
-
+          <div className="mt-16 grid gap-4 lg:grid-cols-3">
             <div className="lift-shadow reveal flex flex-col rounded-card border border-line bg-surface p-7">
               <h3 className="text-[17px] font-medium tracking-[-0.01em]">Payment sessions</h3>
               <p className="prose-brand mt-3 max-w-[34ch]">
@@ -391,32 +409,29 @@ X-Pagesure-Decision: allow`}
               </pre>
             </div>
 
-            <figure className="lift reveal-clip flex flex-col overflow-hidden rounded-card border border-line bg-surface lg:col-span-2">
-              <div className="relative aspect-[3/1] w-full bg-plate">
-                <Image
-                  src="/media/policy-lattice-wide.webp"
-                  alt="A row of wallet identifiers, most empty, with a cluster of six allowed in blue and one blocked in red above a policy boundary line"
-                  fill
-                  sizes="(max-width: 1024px) 100vw, 66vw"
-                  className="object-cover"
-                />
+            <div className="lift-shadow reveal flex flex-col rounded-card border border-line bg-surface p-7">
+              <h3 className="text-[17px] font-medium tracking-[-0.01em]">Provider policies</h3>
+              <p className="prose-brand mt-3 max-w-[38ch]">
+                Allow, block, or hold each request before money moves. A grant is scoped
+                to one service and expires on its own.
+              </p>
+              <div className="mt-auto flex flex-wrap gap-2 pt-7">
+                {OUTCOMES.map((outcome) => (
+                  <span
+                    key={outcome.when}
+                    className={`mono rounded-full border border-line px-3 py-1.5 text-[11px] ${outcome.tone}`}
+                  >
+                    {outcome.when}
+                  </span>
+                ))}
               </div>
-              <figcaption className="p-7">
-                <h3 className="text-[17px] font-medium tracking-[-0.01em]">
-                  Provider policies
-                </h3>
-                <p className="prose-brand mt-3 max-w-[58ch]">
-                  Allow, block, or hold each request before money moves. A grant is scoped
-                  to one service and expires on its own.
-                </p>
-              </figcaption>
-            </figure>
+            </div>
           </div>
         </div>
       </section>
 
       {/*
-        4. Ledger row. Four outcomes across, divided by hairlines, with no cards.
+        5. Ledger row. Four outcomes across, divided by hairlines, with no cards.
 
         A vertical list with a divider under every row is the laziest way to show four
         facts. Laying them across as columns makes the comparison legible at a glance,
@@ -455,7 +470,7 @@ X-Pagesure-Decision: allow`}
       </section>
 
       {/*
-        5. Closing statement, centred, on a tinted band.
+        6. Closing statement, centred, on a tinted band.
 
         The only centred block on the page, which is what makes it read as an ending. It
         carries one CTA and repeats the hero's exact label, so the try-it action has a

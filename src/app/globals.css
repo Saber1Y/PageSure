@@ -12,12 +12,16 @@
  *  - Marketing: VARIANCE 7 (asymmetric, five distinct layout families), MOTION 5
  *    (fluid CSS: staggered trace reveal, scroll-driven section reveals), DENSITY 3.
  *
+ /*
  * Rules this file enforces:
  *  - ONE accent (cobalt). Semantic colours are reserved strictly for policy decisions
  *    (allow / block / review) and are never used decoratively.
  *  - All money, hashes, addresses and IDs are mono with tabular numerals so columns
  *    align down the page.
- *  - No pure #000 or #fff. Canvas and ink are both slightly cool off-values.
+ *  - No pure #000 or #fff. Canvas and ink are both warm off-values: an earlier revision
+ *    used a cool blue-grey neutral ramp and read dry on screen, the way a page does when
+ *    every surface is tinted the same cold. The ramp below leans warm instead, so white
+ *    cards separate from the canvas by temperature as well as by lightness.
  *  - Theme is locked at the page level; sections never invert.
  *  - One radius scale: controls 8px, cards 12px, pills full.
  *  - Text sitting on a filled accent resolves through --color-on-accent, never a
@@ -28,31 +32,40 @@
  */
 
 @theme {
-  /* Neutrals: cool, slightly blue-grey so the accent reads as intentional. */
-  --color-canvas: #f6f6f7;
-  --color-surface: #fcfcfd;
-  --color-surface-2: #f1f1f3;
-  --color-line: #e4e4e7;
-  --color-line-strong: #d0d0d5;
+  /*
+   * Neutrals: warm, low-chroma. Hue sits around 40deg at very low saturation so the
+   * cobalt accent reads as intentional rather than as one more colour in a cold ramp.
+   * Contrast against the accent is handled by --color-on-accent, not by the ramp.
+   */
+  --color-canvas: #faf8f5;
+  --color-surface: #fffefc;
+  --color-surface-2: #f2eee8;
+  --color-line: #e7e1d8;
+  --color-line-strong: #d6cec1;
 
-  --color-ink: #0c0d0f;
-  --color-ink-2: #3d3f45;
-  --color-ink-3: #6b6e76;
-  --color-ink-4: #979aa2;
+  --color-ink: #1c1917;
+  --color-ink-2: #403a34;
+  --color-ink-3: #5f584e;
+  --color-ink-4: #736b61;
 
   /*
    * Brand body colour. Spec is rgb(86, 90, 97) = #565A61.
    *
-   * Measured 6.42:1 on --color-canvas and 6.76:1 on --color-surface, so it clears WCAG
-   * AA for body text with room to spare. This is the colour every marketing paragraph
-   * uses. Dark mode overrides it with a lifted hue-matched value; see the note there.
+   * Measured on the warm ramp below: 6.54:1 on canvas, 6.87:1 on surface, 6.15:1 on
+   * plate, so the exact brand value clears WCAG AA for body text on every surface a
+   * marketing paragraph can land on. This is the colour every marketing paragraph uses.
+   * Dark mode overrides it with a lifted hue-matched value; see the note there.
+   *
+   * The four ink steps are spaced so that all of them clear AA for normal text, worst
+   * case 4.65:1 for ink-4 on plate. An earlier revision of this ramp ended at 2.90:1,
+   * which is decorative-only territory, yet ink-4 carries real 11px and 12px meta labels.
    */
   --color-body: #565a61;
 
   /* Single accent. Cobalt: high contrast, professional, not AI-purple. */
   --color-accent: #2f53e0;
   --color-accent-hover: #2743b8;
-  --color-accent-soft: #eef1fd;
+  --color-accent-soft: #edf0fc;
   --color-accent-ink: #1d3399;
 
   /*
@@ -68,17 +81,29 @@
 
   /* Decision semantics. Only ever used for allow / block / review. */
   --color-allow: #0e7c4a;
-  --color-allow-soft: #e8f5ee;
+  --color-allow-soft: #e6f4ec;
   --color-block: #b42318;
-  --color-block-soft: #fdecea;
+  --color-block-soft: #fdeae7;
   --color-review: #b54708;
-  --color-review-soft: #fdf2e7;
+  --color-review-soft: #fcf1e5;
 
-  --color-neutral-soft: #eeeef0;
+  --color-neutral-soft: #efece6;
 
   /* Light plate that generated illustrations sit on, so they read as intentional in
      both themes rather than as glowing white slabs on a dark canvas. */
-  --color-plate: #f7f7f8;
+  --color-plate: #f4f1eb;
+
+  /*
+   * Backdrop layer colours, read by the Backdrop component.
+   *
+   * These live outside @theme because they are decorative surface tints rather than
+   * theme colours: nothing references them through a utility, and they are consumed as
+   * raw custom properties inside arbitrary background values. Kept in :root so both
+   * themes can override them in the same place as everything else.
+   */
+  --backdrop-bloom: rgb(47 83 224 / 0.07);
+  --backdrop-grid: rgb(28 25 23 / 0.05);
+  --backdrop-orb: rgb(47 83 224 / 0.1);
 
   --font-sans: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, 'SF Mono', monospace;
@@ -127,16 +152,16 @@
  */
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-canvas: #0e0f11;
-    --color-surface: #16181b;
-    --color-surface-2: #1d1f23;
-    --color-line: #2a2d32;
-    --color-line-strong: #3a3e44;
+    --color-canvas: #14120f;
+    --color-surface: #1c1917;
+    --color-surface-2: #262220;
+    --color-line: #332e29;
+    --color-line-strong: #463f38;
 
-    --color-ink: #f2f3f5;
-    --color-ink-2: #c3c6cc;
-    --color-ink-3: #93979f;
-    --color-ink-4: #6d7178;
+    --color-ink: #f7f4ef;
+    --color-ink-2: #cbc5bb;
+    --color-ink-3: #a8a29a;
+    --color-ink-4: #8e887f;
 
     /*
      * Dark counterpart for the brand body colour #565A61.
@@ -144,33 +169,44 @@
      * The brand spec's body colour cannot be reused here. #565A61 against the dark
      * canvas measures 2.61:1, which fails WCAG AA at any text size. The hue is preserved
      * and the lightness lifted until it clears AA body contrast, so the page reads as one
-     * system in both themes instead of one theme having unreadable prose.
+     * system in both themes instead of one theme having unreadable prose. Measured
+     * 7.74:1 on canvas and 6.79:1 on plate.
      */
     --color-body: #a2a7b0;
 
     --color-accent: #6b86ff;
     --color-accent-hover: #849bff;
-    --color-accent-soft: #1a2140;
+    --color-accent-soft: #1b2039;
     --color-accent-ink: #a8b9ff;
 
     /* Near-black ink on the light dark-mode accent. See the light-mode note above. */
     --color-on-accent: #0a0c11;
 
     --color-allow: #4ade9b;
-    --color-allow-soft: #12281f;
+    --color-allow-soft: #14271e;
     --color-block: #ff8a7a;
     --color-block-soft: #2b1714;
     --color-review: #f0b357;
     --color-review-soft: #2a1f11;
 
-    --color-neutral-soft: #212429;
+    --color-neutral-soft: #24211e;
 
     /*
-     * The generated illustrations have near-white backgrounds. On a dark canvas they
-     * read as glowing white slabs, so the media plate stays light in both themes and the
-     * hairline border carries the edge instead.
+     * The plate used to stay near-white in dark mode because generated illustrations have
+     * light backgrounds and read as glowing slabs on a dark canvas. Those illustrations
+     * are gone, so the plate is now just a recessed surface for the one tinted card and
+     * it follows the theme like every other neutral.
      */
-    --color-plate: #f6f6f7;
+    --color-plate: #1f1c19;
+
+    /*
+     * Backdrop tints, dark. The bloom and orbs carry more opacity here because a dark
+     * canvas swallows a light-mode-strength wash, and the grid flips from an ink tint to
+     * a light one so it stays visible without becoming a wireframe.
+     */
+    --backdrop-bloom: rgb(107 134 255 / 0.11);
+    --backdrop-grid: rgb(247 244 239 / 0.045);
+    --backdrop-orb: rgb(107 134 255 / 0.14);
   }
 }
 
@@ -366,6 +402,129 @@
   }
 
   /*
+   * Backdrop orb drift.
+   *
+   * Transform only, and slow enough (48s and 62s) that it reads as shifting light rather
+   * than as movement. The scale component stays within a few percent so the edges of the
+   * blur never visibly pump.
+   *
+   * Under reduced motion the orbs simply stay where they are parked. The bloom and the
+   * grid are not animated at all, so nothing else needs a fallback.
+   */
+  @media (prefers-reduced-motion: no-preference) {
+    .backdrop-orb {
+      animation: orb-drift 48s ease-in-out infinite alternate;
+    }
+
+    .backdrop-orb-late {
+      animation-duration: 62s;
+      animation-delay: -18s;
+    }
+  }
+
+@keyframes orb-drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(3rem, -2.5rem, 0) scale(1.06);
+  }
+}
+
+/*
+   * Workflow diagram.
+   *
+   * One-shot reveal driven by data-inview, set by an IntersectionObserver on the diagram
+   * root. Each element animates from opacity 0 via transform and opacity only, with a
+   * per-element animation-delay carrying the stagger.
+   *
+   * Connectors draw in with stroke-dashoffset against `pathLength="1"`, which normalises
+   * every path to the same 0..1 dash space regardless of its real length. That is what
+   * makes one dasharray value animate all four edges at the same rate.
+   *
+   * `both` fill alone is not enough here. The animation only exists once `data-inview` is
+   * set, so before that the nodes would paint at their natural opacity 1 and then jump to
+   * 0 the instant the observer fires. The static rules below hold the start state, which
+   * is what actually prevents the flash.
+   */
+  .flow-node {
+    opacity: 0;
+  }
+
+  .flow-edge {
+    stroke-dashoffset: 1;
+  }
+
+  .flow-label,
+  .flow-port {
+    opacity: 0;
+  }
+
+  [data-inview='true'] .flow-node {
+    animation: flow-node-in 550ms var(--ease-out) both;
+  }
+
+  [data-inview='true'] .flow-edge {
+    animation: flow-edge-in 800ms var(--ease-in-out) both;
+  }
+
+  [data-inview='true'] .flow-label,
+  [data-inview='true'] .flow-port {
+    animation: flow-fade 400ms ease-out both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    /*
+     * Every part of the diagram is drawn in its final state. The connectors keep their
+     * dash pattern and full length, the labels and nodes sit at opacity 1, and nothing
+     * travels. Setting the offsets explicitly rather than cancelling the animation
+     * matters here, because a cancelled animation would fall back to the static
+     * `stroke-dasharray` value, which is invisible against a full-length path.
+     */
+    .flow-node,
+    .flow-label,
+    .flow-port {
+      opacity: 1;
+      transform: none;
+      animation: none;
+    }
+
+    .flow-edge {
+      stroke-dashoffset: 0;
+      animation: none;
+    }
+  }
+
+@keyframes flow-node-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes flow-edge-in {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes flow-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/*
    * Marquee.
    *
    * Linear is the correct easing here and the only place it is used: a constant-speed
