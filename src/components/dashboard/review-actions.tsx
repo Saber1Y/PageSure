@@ -16,18 +16,24 @@ export function ReviewActions({ reviewId }: { reviewId: string }) {
   async function submit(action: 'approve' | 'reject') {
     setBusy(action)
     setError(null)
-    const response = await fetch(`/api/reviews/${reviewId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, note }),
-    })
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { detail?: string } | null
-      setError(body?.detail ?? `could not ${action} this review`)
+    try {
+      const response = await fetch(`/api/reviews/${reviewId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, note }),
+      })
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { detail?: string } | null
+        setError(body?.detail ?? `could not ${action} this review`)
+        return
+      }
+      router.refresh()
+    } catch {
+      setError('Could not reach the reviews API. Check your connection and try again.')
+    } finally {
+      // Without this a dropped connection leaves both buttons permanently disabled.
       setBusy(null)
-      return
     }
-    router.refresh()
   }
 
   return (
@@ -64,7 +70,11 @@ export function ReviewActions({ reviewId }: { reviewId: string }) {
         </button>
       </div>
 
-      {error ? <p className="text-[12px] text-block">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="text-[12px] text-block">
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }
