@@ -18,12 +18,23 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="min-h-[100dvh]">
       <header className="sticky top-0 z-20 border-b border-line bg-canvas/85 backdrop-blur-sm">
-        <div className="mx-auto flex h-16 max-w-[1400px] items-center justify-between gap-6 px-6">
-          <div className="flex items-center gap-8">
+        <div className="mx-auto max-w-[1400px] px-6">
+          {/*
+            Desktop is one row: brand, sections, account. The section list is intrinsically
+            wider than a phone, so on small screens it wraps onto its own full-width row
+            instead of being squeezed into a few unusable pixels beside the account chip.
+            min-w-0 on the nav wrapper is what lets its overflow-x-auto actually engage:
+            without it the flex item refuses to shrink and pushes the whole document wide.
+          */}
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3 lg:h-16 lg:flex-nowrap lg:py-0">
             <Brand href="/overview" />
-            <Nav />
+            <div className="order-last -mx-2 w-full min-w-0 lg:order-none lg:mx-0 lg:w-auto lg:flex-1">
+              <Nav />
+            </div>
+            <div className="ml-auto shrink-0 lg:ml-0">
+              <AccountChip name={user.displayName} email={user.email} />
+            </div>
           </div>
-          <AccountChip name={user.displayName} email={user.email} />
         </div>
       </header>
       <main className="mx-auto max-w-[1400px] px-6 py-8">{children}</main>
