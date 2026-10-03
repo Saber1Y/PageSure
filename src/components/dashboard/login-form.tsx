@@ -56,7 +56,7 @@ function SubmitButton() {
     <button
       type="submit"
       disabled={pending}
-      className="mt-1 rounded-control bg-accent px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-accent-hover active:translate-y-px disabled:opacity-50"
+      className="mt-1 rounded-control bg-accent px-4 py-2 text-[13px] font-medium text-on-accent transition-colors hover:bg-accent-hover active:translate-y-px disabled:opacity-50"
     >
       {pending ? 'Signing in…' : 'Sign in'}
     </button>

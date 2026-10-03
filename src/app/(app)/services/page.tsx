@@ -19,7 +19,7 @@ export default function ServicesPage() {
         </div>
         <Link
           href="/services/new"
-          className="shrink-0 rounded-control bg-accent px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-accent-hover active:translate-y-px"
+          className="shrink-0 rounded-control bg-accent px-4 py-2 text-[13px] font-medium text-on-accent transition-colors hover:bg-accent-hover active:translate-y-px"
         >
           Create service
         </Link>
@@ -33,7 +33,7 @@ export default function ServicesPage() {
             action={
               <Link
                 href="/services/new"
-                className="inline-flex rounded-control bg-accent px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-accent-hover"
+                className="inline-flex rounded-control bg-accent px-4 py-2 text-[13px] font-medium text-on-accent transition-colors hover:bg-accent-hover"
               >
                 Create service
               </Link>

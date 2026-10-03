@@ -125,7 +125,7 @@ export function PlaygroundClient({ services }: { services: ServiceOption[] }) {
           type="button"
           onClick={run}
           disabled={busy || !slug}
-          className="rounded-control bg-accent px-5 py-2.5 text-[14px] font-medium text-white transition-colors hover:bg-accent-hover active:translate-y-px disabled:opacity-50"
+          className="rounded-control bg-accent px-5 py-2.5 text-[14px] font-medium text-on-accent transition-colors hover:bg-accent-hover active:translate-y-px disabled:opacity-50"
         >
           {busy ? 'Running…' : 'Run paid request'}
         </button>

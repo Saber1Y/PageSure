@@ -87,7 +87,7 @@ export default function OverviewPage() {
               action={
                 <Link
                   href="/playground"
-                  className="inline-flex rounded-control bg-accent px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-accent-hover"
+                  className="inline-flex rounded-control bg-accent px-4 py-2 text-[13px] font-medium text-on-accent transition-colors hover:bg-accent-hover"
                 >
                   Open Playground
                 </Link>
