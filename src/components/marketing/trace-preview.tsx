@@ -42,9 +42,9 @@ export function TracePreview({ live }: { live: Step[] }) {
   const steps = isLive ? live : CANONICAL
 
   return (
-    <figure className="overflow-hidden rounded-card border border-line bg-surface">
-      <figcaption className="flex items-baseline justify-between gap-4 border-b border-line px-5 py-3.5">
-        <span className="text-[13px] font-medium text-ink">
+    <figure className="lift-shadow overflow-hidden rounded-card border border-line bg-surface">
+      <figcaption className="flex items-baseline justify-between gap-4 border-b border-line px-5 py-4">
+        <span className="text-[14px] font-medium text-ink">
           {isLive ? 'A real request from this gateway' : 'The canonical request lifecycle'}
         </span>
         <span className="mono shrink-0 text-[11px] text-ink-4">
@@ -56,7 +56,7 @@ export function TracePreview({ live }: { live: Step[] }) {
         {steps.map((entry, index) => (
           <li
             key={`${entry.step}-${index}`}
-            className="trace-row flex items-baseline gap-4 px-5 py-2.5"
+            className="trace-row row-hover flex items-baseline gap-4 px-5 py-3"
             style={{ animationDelay: `${220 + index * 90}ms` }}
           >
             <span className="mono w-5 shrink-0 text-right text-[11px] text-ink-4">
@@ -65,7 +65,7 @@ export function TracePreview({ live }: { live: Step[] }) {
             <span className={`mono w-[112px] shrink-0 text-[11px] ${tone(entry.step)}`}>
               {entry.step}
             </span>
-            <span className="min-w-0 flex-1 truncate text-[12px] text-ink-3">{entry.detail}</span>
+            <span className="min-w-0 flex-1 truncate text-[13px] text-ink-2">{entry.detail}</span>
           </li>
         ))}
       </ol>
