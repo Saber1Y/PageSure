@@ -213,55 +213,32 @@ export async function runSearch(ctx: UpstreamContext): Promise<SearchResponse> {
 }
 
 // ---------------------------------------------------------------------------
-// market: Stellar Horizon order book -> CoinGecko
+// market: CoinGecko
+//
+// NOTE: a Stellar Horizon DEX order book is deliberately NOT used here.
+//
+// Horizon's /order_book endpoint only handles classic assets (native +
+// credit_alphanum). It rejects a Soroban contract asset outright:
+//   selling_asset_type=contract -> 400 invalid_order_book
+// PageSure prices in USDC SAC, which IS a Soroban contract
+// (CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA), so a Horizon order
+// book cannot price the very asset this gateway charges in. An earlier version of this
+// adapter tried it and silently returned zero quotes, which is worse than not
+// offering it at all.
+//
+// CoinGecko's public endpoint is keyless and returns real prices.
 // ---------------------------------------------------------------------------
 
 const marketProviders = {
-  async horizon(ctx: UpstreamContext): Promise<MarketResponse> {
-    const provider = 'Stellar Horizon (Dex)'
-    const base = env('STELLAR_HORIZON_URL') ?? 'https://horizon-testnet.stellar.org'
-    const symbol = (ctx.search.get('symbol') ?? 'XLM').toUpperCase()
-    const issuer = ctx.config.issuer ?? null
-
-    // Horizon needs a selling asset pair. Native XLM uses the all-zeros issuer.
-    const sellingIssuer = String(issuer ?? 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF')
-    const url = new URL(`${base.replace(/\/$/, '')}/order_book`)
-    url.searchParams.set('selling_asset_type', 'native')
-    url.searchParams.set('selling_asset_code', symbol)
-    url.searchParams.set('buying_asset_type', 'credit_alphanum4')
-    url.searchParams.set('buying_asset_code', 'USDC')
-    url.searchParams.set('buying_asset_issuer', sellingIssuer)
-    url.searchParams.set('limit', '20')
-
-    const payload = (await readJson(await fetch(url), provider)) as {
-      offers?: Array<{ price_r?: { n?: number; d?: number }; amount_r?: { n?: number; d?: number } }>
-    }
-
-    const quotes: MarketQuote[] = (payload.offers ?? []).slice(0, 10).map((offer) => {
-      const price = (offer.price_r?.n ?? 0) / (offer.price_r?.d ?? 1)
-      return {
-        symbol,
-        price,
-        change24h: null,
-        venue: 'Stellar DEX testnet',
-        asOf: new Date().toISOString(),
-      }
-    })
-
-    return { provider, quotes }
-  },
-
   async coingecko(ctx: UpstreamContext): Promise<MarketResponse> {
     const provider = 'CoinGecko'
     const key = env('COINGECKO_API_KEY')
     const ids = ctx.search.get('ids') ?? String(ctx.config.coinGeckoIds ?? 'stellar')
+    const vs = String(ctx.config.vsCurrency ?? 'usd')
 
     const url = new URL('https://api.coingecko.com/api/v3/simple/price')
     url.searchParams.set('ids', ids)
-    url.searchParams.set(
-      'vs_currencies',
-      String(ctx.config.vsCurrency ?? 'usd'),
-    )
+    url.searchParams.set('vs_currencies', vs)
     url.searchParams.set('include_24hr_change', 'true')
 
     const headers: Record<string, string> = { Accept: 'application/json' }
@@ -272,33 +249,34 @@ const marketProviders = {
       Record<string, number>
     >
 
-    const quotes: MarketQuote[] = Object.entries(payload).map(([id, entry]) => {
-      const vs = String(ctx.config.vsCurrency ?? 'usd')
-      return {
-        symbol: id.toUpperCase(),
-        price: entry[vs] ?? 0,
-        change24h: entry[`${vs}_24h_change`] ?? null,
-        venue: 'CoinGecko',
-        asOf: new Date().toISOString(),
-      }
-    })
+    const quotes: MarketQuote[] = Object.entries(payload).map(([id, entry]) => ({
+      symbol: id.toUpperCase(),
+      price: entry[vs] ?? 0,
+      change24h: entry[`${vs}_24h_change`] ?? null,
+      venue: 'CoinGecko',
+      asOf: new Date().toISOString(),
+    }))
+
+    // An empty result means the requested coin id does not exist. Say so, rather than
+    // returning an empty list that reads like a successful quote fetch.
+    if (quotes.length === 0) {
+      throw new UpstreamError(
+        provider,
+        `CoinGecko returned no data for ids="${ids}". Check the id, e.g. ids=stellar,ids=bitcoin.`,
+        502,
+      )
+    }
 
     return { provider, quotes }
   },
 }
 
 export async function runMarket(ctx: UpstreamContext): Promise<MarketResponse> {
-  const preferred = typeof ctx.config.provider === 'string' ? ctx.config.provider : null
-  const order = preferred === 'horizon' ? ['horizon', 'coingecko'] : ['horizon', 'coingecko']
-  const failures: string[] = []
-  for (const name of order as Array<'horizon' | 'coingecko'>) {
-    try {
-      return await marketProviders[name](ctx)
-    } catch (error) {
-      failures.push(`${name}: ${(error as Error).message}`)
-    }
+  try {
+    return await marketProviders.coingecko(ctx)
+  } catch (error) {
+    throw new UpstreamError('market', (error as Error).message, 503)
   }
-  throw new UpstreamError('market', `no market provider available. ${failures.join(' | ')}`, 503)
 }
 
 // ---------------------------------------------------------------------------
