@@ -36,7 +36,7 @@ export const metadata: Metadata = {
   description:
     'Machine-payment gateway for APIs and digital services. HTTP-native Stellar MPP payments with provider policy enforcement.',
   openGraph: {
-    title: 'PageSure — Let machines pay for APIs',
+    title: 'PageSure, let machines pay for APIs',
     description:
       'HTTP-native Stellar payments with provider-controlled access policy. Charge per request, or settle a session in one transaction.',
     type: 'website',
