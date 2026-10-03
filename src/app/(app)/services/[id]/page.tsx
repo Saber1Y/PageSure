@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { Badge, Card, CardHeader, KeyValue } from '@/components/ui/primitives'
+import {NOT_SET,  Badge, Card, CardHeader, KeyValue } from '@/components/ui/primitives'
 import { resolveServiceById } from '@/lib/services/registry'
 import { serviceRollups } from '@/lib/metering/aggregates'
 import { db } from '@/lib/db/client'
@@ -69,7 +69,7 @@ export default async function ServiceDetailPage({ params }: { params: Promise<{ 
             />
             <KeyValue
               k="Last request"
-              v={rollup?.lastRequestAt ? new Date(rollup.lastRequestAt).toISOString().slice(0, 19) : '—'}
+              v={rollup?.lastRequestAt ? new Date(rollup.lastRequestAt).toISOString().slice(0, 19) : NOT_SET}
               mono
             />
           </div>

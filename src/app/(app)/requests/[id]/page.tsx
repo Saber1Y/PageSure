@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Card, KeyValue } from '@/components/ui/primitives'
+import {NOT_SET,  Card, KeyValue } from '@/components/ui/primitives'
 import { PolicyTraceView } from '@/components/dashboard/policy-trace'
 import { requestDetail } from '@/lib/metering/aggregates'
 import { formatAmount } from '@/lib/money'
@@ -71,13 +71,13 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
         <div className="grid gap-x-8 px-5 pb-5 sm:grid-cols-2">
           <KeyValue k="Status" v={request.status} mono />
           <KeyValue k="Amount" v={`${formatAmount(request.amountBase, request.decimals)} ${request.assetCode}`} mono />
-          <KeyValue k="Claimed payer (untrusted)" v={request.claimedPayer ?? '—'} mono />
-          <KeyValue k="Verified payer (authoritative)" v={request.verifiedPayer ?? '—'} mono />
-          <KeyValue k="Upstream provider" v={request.upstreamProvider ?? '—'} />
-          <KeyValue k="Upstream status" v={request.upstreamStatus ?? '—'} mono />
-          <KeyValue k="Receipt reference" v={request.receiptReference ?? '—'} mono />
-          <KeyValue k="Payment tx" v={request.paymentTxHash ?? '—'} mono />
-          <KeyValue k="Latency" v={request.latencyMs ? `${request.latencyMs}ms` : '—'} mono />
+          <KeyValue k="Claimed payer (untrusted)" v={request.claimedPayer ?? NOT_SET} mono />
+          <KeyValue k="Verified payer (authoritative)" v={request.verifiedPayer ?? NOT_SET} mono />
+          <KeyValue k="Upstream provider" v={request.upstreamProvider ?? NOT_SET} />
+          <KeyValue k="Upstream status" v={request.upstreamStatus ?? NOT_SET} mono />
+          <KeyValue k="Receipt reference" v={request.receiptReference ?? NOT_SET} mono />
+          <KeyValue k="Payment tx" v={request.paymentTxHash ?? NOT_SET} mono />
+          <KeyValue k="Latency" v={request.latencyMs ? `${request.latencyMs}ms` : NOT_SET} mono />
         </div>
       </Card>
 

@@ -1,4 +1,4 @@
-import { Badge, type DecisionTone } from '@/components/ui/primitives'
+import {NOT_SET,  Badge, type DecisionTone } from '@/components/ui/primitives'
 import type { CheckStatus, PolicyTrace } from '@/lib/policy/types'
 
 /**
@@ -73,7 +73,7 @@ export function PolicyTraceView({
               {STATUS_LABEL[check.status]}
             </span>
             <span className="min-w-0 flex-1 text-[12px] leading-snug text-ink-3">
-              {check.detail || '—'}
+              {check.detail || NOT_SET}
             </span>
           </li>
         ))}

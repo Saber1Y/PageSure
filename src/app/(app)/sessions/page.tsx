@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Badge, Card, Dot, EmptyState } from '@/components/ui/primitives'
+import {NOT_SET,  Badge, Card, Dot, EmptyState } from '@/components/ui/primitives'
 import { listAllSessions } from '@/lib/sessions/lookup'
 import { resolveServiceById } from '@/lib/services/registry'
 import { formatAmount } from '@/lib/money'
@@ -58,7 +58,7 @@ export default function SessionsPage() {
                         {session.funder.slice(0, 10)}…
                       </td>
                       <td className="px-3 py-3 text-[13px] text-ink-2">
-                        {service?.name ?? '—'}
+                        {service?.name ?? NOT_SET}
                       </td>
                       <td className="mono px-3 py-3 text-right text-[13px] text-ink">
                         {session.requestCount}
