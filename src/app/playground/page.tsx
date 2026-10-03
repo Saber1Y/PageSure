@@ -22,14 +22,18 @@ export default function PlaygroundPage() {
       </header>
 
       <main className="mx-auto max-w-[1400px] px-6 py-8">
-        <div className="max-w-[62ch]">
-          <h1 className="text-[22px] font-medium tracking-tight">Agent playground</h1>
+        <div className="max-w-[68ch]">
+          <h1 className="text-[26px] leading-tight font-semibold tracking-tight">
+            Agent playground
+          </h1>
           <p className="mt-2 text-[14px] leading-relaxed text-ink-3">
             Run a real paid request. The client signs a Soroban transfer against a funded
             testnet account and the waterfall below is built from the SDK&apos;s own progress
             events, not an animation.
           </p>
-          <p className="mono mt-2 text-[11px] text-ink-4">asset {USDC_SAC_TESTNET}</p>
+          <p className="mono mt-2 text-[11px] break-all text-ink-4">
+            asset {USDC_SAC_TESTNET}
+          </p>
         </div>
 
         <div className="mt-8">

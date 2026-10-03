@@ -6,6 +6,7 @@ import {
   Dot,
   EmptyState,
   Metric,
+  PageHeader,
   type DecisionTone,
 } from '@/components/ui/primitives'
 import { overviewStats, recentActivity, serviceRollups } from '@/lib/metering/aggregates'
@@ -33,12 +34,10 @@ export default function OverviewPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <header>
-        <h1 className="text-[22px] font-medium tracking-tight">Overview</h1>
-        <p className="mt-1 text-[14px] text-ink-3">
-          Every figure below is a query over the gateway write tables.
-        </p>
-      </header>
+      <PageHeader
+        title="Overview"
+        body="Every figure below is a query over the gateway write tables."
+      />
 
       {/* Volume and traffic */}
       <Card>

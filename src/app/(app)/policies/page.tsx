@@ -1,4 +1,4 @@
-import { Badge, Card, Dot, KeyValue, short } from '@/components/ui/primitives'
+import { Badge, Card, Dot, KeyValue, PageHeader, short } from '@/components/ui/primitives'
 import { policiesWithUsage } from '@/lib/policy/read-model'
 
 export const dynamic = 'force-dynamic'
@@ -12,13 +12,10 @@ export default function PoliciesPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <header>
-        <h1 className="text-[22px] font-medium tracking-tight">Policies</h1>
-        <p className="mt-1 max-w-[65ch] text-[14px] leading-relaxed text-ink-3">
-          A provider-defined access policy engine. Evaluation is ordered and every check
-          is recorded, so any decision can be explained after the fact.
-        </p>
-      </header>
+      <PageHeader
+        title="Policies"
+        body="A provider-defined access policy engine. Evaluation is ordered and every check is recorded, so any decision can be explained after the fact."
+      />
 
       {rows.length === 0 ? (
         <Card>

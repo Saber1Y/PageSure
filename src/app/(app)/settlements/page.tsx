@@ -1,4 +1,4 @@
-import { Badge, Card, CardHeader, Dot, EmptyState, KeyValue, short } from '@/components/ui/primitives'
+import { Badge, Card, CardHeader, Dot, EmptyState, KeyValue, PageHeader, short } from '@/components/ui/primitives'
 import { settlementRows } from '@/lib/metering/aggregates'
 import { formatAmount } from '@/lib/money'
 
@@ -13,13 +13,10 @@ export default function SettlementsPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <header>
-        <h1 className="text-[22px] font-medium tracking-tight">Settlements</h1>
-        <p className="mt-1 max-w-[65ch] text-[14px] leading-relaxed text-ink-3">
-          Every row is a real Stellar transaction. A charge settles once per request; a
-          session settles once for the whole channel.
-        </p>
-      </header>
+      <PageHeader
+        title="Settlements"
+        body="Every row is a real Stellar transaction. A charge settles once per request; a session settles once for the whole channel."
+      />
 
       {rows.length === 0 ? (
         <Card>

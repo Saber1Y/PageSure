@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Badge, Card, EmptyState, KeyValue } from '@/components/ui/primitives'
+import { Badge, Card, EmptyState, KeyValue, PageHeader } from '@/components/ui/primitives'
 import { incidentRows } from '@/lib/metering/aggregates'
 import { resolveServiceById } from '@/lib/services/registry'
 import { formatAmount } from '@/lib/money'
@@ -16,16 +16,10 @@ export default function IncidentsPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <header>
-        <h1 className="text-[22px] font-medium tracking-tight">Incidents</h1>
-        <p className="mt-1 max-w-[65ch] text-[14px] leading-relaxed text-ink-3">
-          Money taken without delivery, upstream failures, and channel disputes.
-          In charge mode the payment settles inside the SDK before a post-verification
-          policy decision can be applied, so these outcomes are surfaced rather than
-          hidden. Session mode has no equivalent, because a blocked request never
-          advances the channel cumulative.
-        </p>
-      </header>
+      <PageHeader
+        title="Incidents"
+        body="Money taken without delivery, upstream failures, and channel disputes. In charge mode the payment settles inside the SDK before a post-verification policy decision can be applied, so these outcomes are surfaced rather than hidden. Session mode has no equivalent, because a blocked request never advances the channel cumulative."
+      />
 
       {rows.length === 0 ? (
         <Card>

@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Badge, Card, Dot, EmptyState } from '@/components/ui/primitives'
+import { Badge, Card, Dot, EmptyState, PageHeader } from '@/components/ui/primitives'
 import { serviceRollups } from '@/lib/metering/aggregates'
 import { formatAmount } from '@/lib/money'
 
@@ -10,20 +10,18 @@ export default function ServicesPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <header className="flex items-end justify-between gap-6">
-        <div>
-          <h1 className="text-[22px] font-medium tracking-tight">Services</h1>
-          <p className="mt-1 text-[14px] text-ink-3">
-            Each service is exposed at <span className="mono">/v1/:slug</span> and priced independently.
-          </p>
-        </div>
-        <Link
-          href="/services/new"
-          className="shrink-0 rounded-control bg-accent px-4 py-2 text-[13px] font-medium text-on-accent transition-colors hover:bg-accent-hover active:translate-y-px"
-        >
-          Create service
-        </Link>
-      </header>
+      <PageHeader
+        title="Services"
+        body="Each service is exposed at /v1/:slug and priced independently."
+        action={
+          <Link
+            href="/services/new"
+            className="shrink-0 rounded-control bg-accent px-4 py-2 text-[13px] font-medium text-on-accent transition-colors hover:bg-accent-hover active:translate-y-px"
+          >
+            Create service
+          </Link>
+        }
+      />
 
       {services.length === 0 ? (
         <Card>
@@ -63,7 +61,10 @@ export default function ServicesPage() {
                   </div>
                 </div>
 
-                <p className="text-[13px] leading-relaxed text-ink-3">{svc.description}</p>
+                {/* Capped: service blurbs ran to ~96 characters per line in the card grid. */}
+                <p className="max-w-[62ch] text-[13px] leading-relaxed text-ink-3">
+                  {svc.description}
+                </p>
 
                 <dl className="grid grid-cols-3 gap-4 border-t border-line pt-4">
                   <div>

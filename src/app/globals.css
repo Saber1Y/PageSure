@@ -105,6 +105,24 @@
   --backdrop-grid: rgb(28 25 23 / 0.05);
   --backdrop-orb: rgb(47 83 224 / 0.1);
 
+  /*
+   * Card elevation.
+   *
+   * Every console surface used to be a hairline border on a fill, which is why the cards
+   * read as outlines rather than as objects sitting above the canvas. This is one very
+   * soft shadow, tinted with the same warm hue as the neutrals instead of black, so it
+   * darkens the page rather than muddying it. It is deliberately shallow: enough to
+   * separate, not enough to look skeuomorphic, and it never replaces the border.
+   *
+   * This lives OUTSIDE @theme on purpose. Tailwind v4 resolves a `--shadow-*` theme entry
+   * into a literal `--tw-shadow` value inside the utility at build time, so the generated
+   * `shadow-card` class freezes whatever the light value was and the dark-mode override
+   * below would silently never apply. Defining the property here and pairing it with an
+   * explicit `.shadow-card` rule further down is what makes the override reach the page.
+   * Same reasoning as --backdrop-* above.
+   */
+  --shadow-card: 0 1px 2px rgb(28 25 23 / 0.04), 0 6px 16px -8px rgb(28 25 23 / 0.1);
+
   --font-sans: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, 'SF Mono', monospace;
 
@@ -127,6 +145,12 @@
 
   --radius-control: 8px;
   --radius-card: 12px;
+  /*
+   * Status chips get a tighter radius than a control. A full pill reads decorative; a
+   * 6px radius reads like a precise readout, and it matches --radius-control so chips
+   * and the buttons beside them share one geometry instead of two.
+   */
+  --radius-badge: 6px;
 
   /*
    * Motion curves. Never the CSS built-ins for UI work: `ease-in` starts slow, which
@@ -200,6 +224,14 @@
     --color-plate: #1f1c19;
 
     /*
+     * Dark elevation. A shadow that was subtle on a light canvas is invisible on a dark
+     * one, because there is no room for darkness to fall into, so the dark value trades
+     * opacity for spread and is tinted toward the light ink: the card edge is defined by a
+     * faint lift off the canvas instead of a drop away from it.
+     */
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 20px -10px rgb(0 0 0 / 0.55);
+
+    /*
      * Backdrop tints, dark. The bloom and orbs carry more opacity here because a dark
      * canvas swallows a light-mode-strength wash, and the grid flips from an ink tint to
      * a light one so it stays visible without becoming a wireframe.
@@ -269,6 +301,15 @@
       scroll-behavior: auto !important;
     }
   }
+}
+
+/*
+ * Card elevation, wired by hand rather than through Tailwind's shadow-* namespace.
+ * See the --shadow-card note above: this is what lets the dark-mode override reach the
+ * rendered card instead of being frozen at build time.
+ */
+.shadow-card {
+  box-shadow: var(--shadow-card);
 }
 
 @layer components {

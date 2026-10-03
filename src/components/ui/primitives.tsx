@@ -24,9 +24,46 @@ export function Card({
 }) {
   return (
     <div
-      className={`rounded-card border border-line bg-surface ${className}`}
+      className={`rounded-card border border-line bg-surface shadow-card ${className}`}
     >
       {children}
+    </div>
+  )
+}
+
+/**
+ * Page title block.
+ *
+ * Seven list pages each hand-rolled their own <header>, which is how the h1 ended up at
+ * 22px/500 everywhere: a weight chosen once, by whoever wrote the first page, and then
+ * copy-pasted. It also left the title smaller than the 26px metric tiles it sits above,
+ * so the number on a card was the loudest thing on screen and the page had no entry
+ * point. One primitive fixes both and keeps those pages in step.
+ *
+ * The three detail pages deliberately do not use this: each leads with a back link and
+ * then a status row, so the plain title-and-paragraph shape would not fit them. They set
+ * the same scale by hand.
+ */
+export function PageHeader({
+  title,
+  body,
+  action,
+}: {
+  title: string
+  body?: string
+  action?: ReactNode
+}) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+      <div className="min-w-0">
+        <h1 className="text-[26px] leading-tight font-semibold tracking-tight">{title}</h1>
+        {body ? (
+          /* Capped measure: this paragraph sits in a 1400px container, so uncapped it
+             runs past 190 characters per line and becomes unreadable. */
+          <p className="mt-2 max-w-[68ch] text-[14px] leading-relaxed text-ink-3">{body}</p>
+        ) : null}
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
     </div>
   )
 }
@@ -43,8 +80,14 @@ export function CardHeader({
   return (
     <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
       <div className="min-w-0">
-        <h2 className="text-[15px] font-medium tracking-tight text-ink">{title}</h2>
-        {hint ? <p className="mt-0.5 text-[13px] leading-snug text-ink-3">{hint}</p> : null}
+        {/* 15px/600, up from 15px/500. At 500 the card title sat at the same size as the
+            15px body values inside the card, so the label and its data had one voice. */}
+        <h2 className="text-[15px] leading-snug font-semibold tracking-tight text-ink">
+          {title}
+        </h2>
+        {hint ? (
+          <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-ink-3">{hint}</p>
+        ) : null}
       </div>
       {action ? <div className="shrink-0">{action}</div> : null}
     </div>
@@ -115,7 +158,7 @@ export function Badge({
 
   return (
     <span
-      className={`mono inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium tracking-tight ${cls}`}
+      className={`mono inline-flex items-center gap-1.5 rounded-badge px-2.5 py-1 text-[11px] font-medium tracking-tight ${cls}`}
     >
       {children}
     </span>

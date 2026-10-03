@@ -176,7 +176,7 @@ export function PlaygroundClient({ services }: { services: ServiceOption[] }) {
 
         <div className="rounded-card border border-line bg-surface">
           <div className="border-b border-line px-5 py-3.5">
-            <h2 className="text-[15px] font-medium tracking-tight">Request lifecycle</h2>
+            <h2 className="text-[15px] leading-snug font-semibold tracking-tight">Request lifecycle</h2>
           </div>
 
           {!result ? (
@@ -192,7 +192,7 @@ export function PlaygroundClient({ services }: { services: ServiceOption[] }) {
                   ))}
                 </ul>
               ) : (
-                <p className="text-[13px] text-ink-3">
+                <p className="max-w-[58ch] text-[13px] leading-relaxed text-ink-3">
                   Run a request to see the real payment lifecycle, driven by the SDK&apos;s
                   progress events.
                 </p>
@@ -241,7 +241,7 @@ export function PlaygroundClient({ services }: { services: ServiceOption[] }) {
 
             <div className="rounded-card border border-line bg-surface">
               <div className="border-b border-line px-5 py-3.5">
-                <h2 className="text-[15px] font-medium tracking-tight">
+                <h2 className="text-[15px] leading-snug font-semibold tracking-tight">
                   {result.ok ? 'Service response' : 'Gateway response'}
                 </h2>
               </div>

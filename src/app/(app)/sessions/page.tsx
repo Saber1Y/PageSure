@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import {NOT_SET,  Badge, Card, Dot, EmptyState } from '@/components/ui/primitives'
+import { NOT_SET, Badge, Card, Dot, EmptyState, PageHeader } from '@/components/ui/primitives'
 import { listAllSessions } from '@/lib/sessions/lookup'
 import { resolveServiceById } from '@/lib/services/registry'
 import { formatAmount } from '@/lib/money'
@@ -11,13 +11,10 @@ export default function SessionsPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <header>
-        <h1 className="text-[22px] font-medium tracking-tight">Sessions</h1>
-        <p className="mt-1 max-w-[65ch] text-[14px] leading-relaxed text-ink-3">
-          Each session is one funded one-way payment channel. Requests accumulate off-chain
-          as cumulative commitments and settle on-chain once, when the channel closes.
-        </p>
-      </header>
+      <PageHeader
+        title="Sessions"
+        body="Each session is one funded one-way payment channel. Requests accumulate off-chain as cumulative commitments and settle on-chain once, when the channel closes."
+      />
 
       {sessions.length === 0 ? (
         <Card>

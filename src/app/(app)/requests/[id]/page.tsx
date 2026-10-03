@@ -44,7 +44,9 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
         <Link href="/overview" className="inline-flex items-center rounded-control px-2 py-1 text-[13px] text-accent hover:underline">
           Overview
         </Link>
-        <h1 className="mono mt-2 text-[22px] font-medium tracking-tight">{request.id}</h1>
+        <h1 className="mono mt-2 text-[19px] leading-tight font-semibold tracking-tight break-all">
+          {request.id}
+        </h1>
         <p className="mt-1 text-[13px] text-ink-3">
           {request.serviceName} · {request.mode === 'channel' ? 'MPP Session' : 'MPP Charge'} ·{' '}
           {new Date(request.createdAt).toISOString().replace('T', ' ').slice(0, 19)}
@@ -53,7 +55,7 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
 
       <Card>
         <div className="px-5 py-4">
-          <h2 className="text-[15px] font-medium tracking-tight">Policy evaluation</h2>
+          <h2 className="text-[15px] leading-snug font-semibold tracking-tight">Policy evaluation</h2>
         </div>
         <div className="px-5 pb-5">
           <PolicyTraceView
@@ -66,7 +68,7 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
 
       <Card>
         <div className="px-5 py-4">
-          <h2 className="text-[15px] font-medium tracking-tight">Request record</h2>
+          <h2 className="text-[15px] leading-snug font-semibold tracking-tight">Request record</h2>
         </div>
         <div className="grid gap-x-8 px-5 pb-5 sm:grid-cols-2">
           <KeyValue k="Status" v={request.status} mono />
@@ -83,7 +85,7 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
 
       <Card>
         <div className="px-5 py-4">
-          <h2 className="text-[15px] font-medium tracking-tight">How to read this</h2>
+          <h2 className="text-[15px] leading-snug font-semibold tracking-tight">How to read this</h2>
         </div>
         <div className="flex flex-col gap-2 px-5 pb-5 text-[13px] leading-relaxed text-ink-3">
           <p>

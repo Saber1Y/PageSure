@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { Badge, Card, Dot, EmptyState, KeyValue } from '@/components/ui/primitives'
+import { Badge, Card, Dot, EmptyState, KeyValue, PageHeader } from '@/components/ui/primitives'
 import { resolveServiceById } from '@/lib/services/registry'
 import { formatAmount } from '@/lib/money'
 import { openReviews, countPendingReviews } from '@/lib/policy/review'
@@ -19,13 +19,10 @@ export default function ReviewPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <header>
-        <h1 className="text-[22px] font-medium tracking-tight">Review queue</h1>
-        <p className="mt-1 max-w-[65ch] text-[14px] leading-relaxed text-ink-3">
-          Held requests. Nothing here has been charged. Approving a wallet creates a
-          time-boxed grant scoped to that one service, not a permanent allowlist entry.
-        </p>
-      </header>
+      <PageHeader
+        title="Review queue"
+        body="Held requests. Nothing here has been charged. Approving a wallet creates a time-boxed grant scoped to that one service, not a permanent allowlist entry."
+      />
 
       {pending.length === 0 ? (
         <Card>
@@ -85,8 +82,14 @@ export default function ReviewPage() {
 
       <Card>
         <div className="px-5 py-4">
-          <h2 className="text-[15px] font-medium tracking-tight">How a hold behaves</h2>
-          <div className="mt-3 flex flex-col gap-2 text-[13px] leading-relaxed text-ink-3">
+          {/* Matches CardHeader's title weight so the two kinds of card heading do not
+              read as different components. */}
+          <h2 className="text-[15px] leading-snug font-semibold tracking-tight">
+            How a hold behaves
+          </h2>
+          {/* Capped: this sat uncapped inside a full-width card and ran to ~200
+              characters per line. */}
+          <div className="mt-3 flex max-w-[68ch] flex-col gap-2 text-[13px] leading-relaxed text-ink-3">
             <p>
               Preflight runs before any payment exists, so a hold here costs the payer
               nothing: no MPP challenge is issued, nothing settles on chain, and the

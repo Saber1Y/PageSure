@@ -30,7 +30,7 @@ export default async function ServiceDetailPage({ params }: { params: Promise<{ 
           Services
         </Link>
         <div className="mt-2 flex flex-wrap items-center gap-3">
-          <h1 className="text-[22px] font-medium tracking-tight">{service.name}</h1>
+          <h1 className="text-[26px] leading-tight font-semibold tracking-tight">{service.name}</h1>
           <Badge tone={service.mode === 'channel' ? 'pending' : 'neutral'}>
             {service.mode === 'channel' ? 'MPP Session' : 'MPP Charge'}
           </Badge>
