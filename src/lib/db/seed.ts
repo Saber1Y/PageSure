@@ -8,18 +8,21 @@ import {
   users,
 } from '@/lib/db/schema'
 import { USDC_SAC_TESTNET, STELLAR_TESTNET } from '@stellar/mpp'
+import { configuredOperatorWallet } from '@/lib/auth/wallet'
 import { eq } from 'drizzle-orm'
-import { hashPassword } from '@/lib/auth/password'
 import { randomUUID } from 'node:crypto'
 
 /**
- * Seed the demo provider, policies and services.
+ * Seed policies and services.
+ *
+ * There is deliberately NO account seeding here. The console operator is created the
+ * first time somebody proves control of PROVIDER_RECIPIENT_G, so there is no credential
+ * in .env, no password hash in the database, and nothing to rotate or leak. This script
+ * only lays down the sellable side: what is being sold, and who may buy it.
  *
  * Idempotent: re-running updates the demo rows rather than duplicating them.
  * Prices are in USDC base units at 7 decimals, so 0.01 USDC = '100000'.
  */
-
-const DEMO_EMAIL = 'provider@pagesure.dev'
 
 function uid(prefix: string): string {
   return `${prefix}_${randomUUID().replace(/-/g, '').slice(0, 20)}`
@@ -29,34 +32,28 @@ export async function seed(): Promise<{ created: boolean; services: number }> {
   const target = db()
 
   // ---- provider account ---------------------------------------------------
-  // The env var is the source of truth. Re-running the seed re-syncs the stored
-  // credential and label, so rotating PROVIDER_ADMIN_PASSWORD actually takes effect
-  // instead of silently leaving the old hash in place.
-  const password = process.env.PROVIDER_ADMIN_PASSWORD
-  if (!password) throw new Error('PROVIDER_ADMIN_PASSWORD is not set')
-  const displayName = process.env.PROVIDER_LABEL ?? 'PageSure Demo Provider'
-
-  const existingUser = target.select().from(users).where(eq(users.email, DEMO_EMAIL)).get()
+  // Only a label, and only for the account that already exists because its owner proved
+  // wallet control. If nobody has signed in yet there is nothing to do, and inventing a
+  // user row here is exactly the demo behaviour this replaces.
+  //
+  // Looked up by WALLET, not by "any row with no email": after the auth migration a
+  // leftover legacy row can also have a null email, and relabelling that orphan would
+  // quietly mislabel the real operator's account.
+  let operatorWallet: string | null = null
+  try {
+    operatorWallet = configuredOperatorWallet()
+  } catch {
+    console.log('PROVIDER_RECIPIENT_G is not set: skipping provider label sync')
+  }
+  const existingUser = operatorWallet
+    ? target.select().from(users).where(eq(users.walletPublicKey, operatorWallet)).get()
+    : null
   if (existingUser) {
-    target
-      .update(users)
-      .set({ passwordHash: hashPassword(password), displayName })
-      .where(eq(users.id, existingUser.id))
-      .run()
-    console.log(`synced provider account ${DEMO_EMAIL} from PROVIDER_ADMIN_PASSWORD`)
-  } else {
-    target
-      .insert(users)
-      .values({
-        id: uid('usr'),
-        email: DEMO_EMAIL,
-        passwordHash: hashPassword(password),
-        displayName,
-        role: 'owner',
-        createdAt: Date.now(),
-      })
-      .run()
-    console.log(`created provider account ${DEMO_EMAIL}`)
+    const displayName = process.env.PROVIDER_LABEL ?? 'PageSure Provider'
+    target.update(users).set({ displayName }).where(eq(users.id, existingUser.id)).run()
+    console.log(`synced provider label for ${existingUser.id} from PROVIDER_LABEL`)
+  } else if (operatorWallet) {
+    console.log('no operator account yet: it is created on first wallet sign-in')
   }
 
   // ---- policy -------------------------------------------------------------

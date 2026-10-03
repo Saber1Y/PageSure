@@ -8,20 +8,112 @@ import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqli
  * All timestamps are integer unix milliseconds (UTC).
  */
 
+/**
+ * Provider operators.
+ *
+ * There is no password column and no seeded row. An account is created the first time
+ * someone proves control of the settlement wallet, so the credential lives in the
+ * operator's wallet rather than in a .env file that ships with the repo.
+ *
+ * `walletPublicKey` is the ROOT of trust: it must equal PROVIDER_RECIPIENT_G. A passkey
+ * is a second, revocable way in, and is only ever created from an already-authenticated
+ * session, so a passkey can never be the thing that bootstraps an account.
+ */
 export const users = sqliteTable(
   'users',
   {
     id: text('id').primaryKey(),
-    email: text('email').notNull(),
-    // scrypt: N=16384, r=8, p=1, 32-byte salt, 64-byte derived key. See lib/auth/password.ts
-    passwordHash: text('password_hash').notNull(),
+    /**
+     * Display/contact only. Nullable because wallet sign-in has no email to collect, and
+     * nothing authenticates against it.
+     */
+    email: text('email'),
+    /** Stellar ed25519 public key that signed the enrolment challenge. Unique. */
+    walletPublicKey: text('wallet_public_key'),
     displayName: text('display_name').notNull(),
     role: text('role', { enum: ['owner', 'operator'] })
       .notNull()
       .default('owner'),
     createdAt: integer('created_at').notNull(),
   },
-  (t) => [uniqueIndex('users_email_idx').on(t.email)],
+  (t) => [
+    uniqueIndex('users_email_idx').on(t.email),
+    uniqueIndex('users_wallet_idx').on(t.walletPublicKey),
+  ],
+)
+
+/**
+ * Single-use challenges for wallet sign-in.
+ *
+ * SEP-0007 shape: the server issues random bytes, the wallet signs them, the server
+ * verifies. The row exists so a challenge can be consumed exactly once — without it a
+ * captured signature would be replayable forever.
+ *
+ * `purpose` keeps enrolment and login challenges in one table without letting a login
+ * challenge enrol an account, or an enrolment challenge mint a session.
+ */
+export const loginChallenges = sqliteTable(
+  'login_challenges',
+  {
+    id: text('id').primaryKey(),
+    /** The exact bytes the wallet signs. Never store the signature. */
+    challenge: text('challenge').notNull(),
+    purpose: text('purpose', { enum: ['enrol', 'login'] }).notNull(),
+    /** Wallet the challenge was issued to; null before the client states which one. */
+    walletPublicKey: text('wallet_public_key'),
+    expiresAt: integer('expires_at').notNull(),
+    consumedAt: integer('consumed_at'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('login_challenges_expiry_idx').on(t.expiresAt)],
+)
+
+/**
+ * WebAuthn credentials.
+ *
+ * `publicKey` is the COSE key in base64url, exactly as WebAuthn encodes it. The counter
+ * is the authenticator's signature counter: a value that goes backwards means a cloned
+ * authenticator and must be rejected.
+ */
+export const passkeys = sqliteTable(
+  'passkeys',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** base64url credential id, the value the browser sends back. */
+    credentialId: text('credential_id').notNull(),
+    publicKey: text('public_key').notNull(),
+    counter: integer('counter').notNull().default(0),
+    /** JSON array of authenticator transport hints, e.g. ["internal","hybrid"]. */
+    transports: text('transports'),
+    /** Human label set at enrolment, so a lost phone is identifiable. */
+    label: text('label').notNull(),
+    createdAt: integer('created_at').notNull(),
+    lastUsedAt: integer('last_used_at'),
+  },
+  (t) => [
+    uniqueIndex('passkeys_credential_idx').on(t.credentialId),
+    index('passkeys_user_idx').on(t.userId),
+  ],
+)
+
+/**
+ * Login attempt counters, keyed by client IP.
+ *
+ * Separate from rate_limit_buckets, which is scoped to a policy and a wallet: this one
+ * guards the console, where the wallet is often not yet known.
+ */
+export const authAttempts = sqliteTable(
+  'auth_attempts',
+  {
+    key: text('key').primaryKey(),
+    count: integer('count').notNull().default(0),
+    windowStart: integer('window_start').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [index('auth_attempts_window_idx').on(t.windowStart)],
 )
 
 export const sessions = sqliteTable(
