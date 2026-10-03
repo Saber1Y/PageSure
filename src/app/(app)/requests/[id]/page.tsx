@@ -41,7 +41,7 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
   return (
     <div className="flex flex-col gap-8">
       <header>
-        <Link href="/overview" className="text-[13px] text-accent hover:underline">
+        <Link href="/overview" className="inline-flex items-center rounded-control px-2 py-1 text-[13px] text-accent hover:underline">
           Overview
         </Link>
         <h1 className="mono mt-2 text-[22px] font-medium tracking-tight">{request.id}</h1>

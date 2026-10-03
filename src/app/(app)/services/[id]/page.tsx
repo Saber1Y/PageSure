@@ -26,7 +26,7 @@ export default async function ServiceDetailPage({ params }: { params: Promise<{ 
   return (
     <div className="flex flex-col gap-8">
       <header>
-        <Link href="/services" className="text-[13px] text-accent hover:underline">
+        <Link href="/services" className="inline-flex items-center rounded-control px-2 py-1 text-[13px] text-accent hover:underline">
           Services
         </Link>
         <div className="mt-2 flex flex-wrap items-center gap-3">

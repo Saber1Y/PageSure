@@ -15,7 +15,7 @@ export default function PlaygroundPage() {
       <header className="border-b border-line">
         <div className="mx-auto flex h-16 max-w-[1400px] items-center justify-between px-6">
           <Brand href="/" suffix="Playground" />
-          <a href="/overview" className="text-[13px] text-ink-2 transition-colors hover:text-ink hover:underline">
+          <a href="/overview" className="inline-flex items-center rounded-control px-2 py-1 text-[13px] text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink">
             Provider console
           </a>
         </div>

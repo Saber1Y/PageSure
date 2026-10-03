@@ -6,7 +6,6 @@ import {
   Dot,
   EmptyState,
   Metric,
-  short,
   type DecisionTone,
 } from '@/components/ui/primitives'
 import { overviewStats, recentActivity, serviceRollups } from '@/lib/metering/aggregates'
@@ -152,7 +151,7 @@ export default function OverviewPage() {
             </div>
           </div>
           <div className="border-t border-line px-5 py-3">
-            <Link href="/settlements" className="text-[13px] text-accent hover:underline">
+            <Link href="/settlements" className="inline-flex items-center rounded-control px-2 py-1 text-[13px] text-accent hover:underline">
               View settlements
             </Link>
           </div>
@@ -165,7 +164,7 @@ export default function OverviewPage() {
           title="Services"
           hint="Registered endpoints exposed at /v1/:slug"
           action={
-            <Link href="/services" className="text-[13px] text-accent hover:underline">
+            <Link href="/services" className="inline-flex items-center rounded-control px-2 py-1 text-[13px] text-accent hover:underline">
               Manage
             </Link>
           }
@@ -180,7 +179,7 @@ export default function OverviewPage() {
                   <div className="flex items-center gap-2">
                     <Link
                       href={`/services/${svc.id}`}
-                      className="truncate text-[14px] font-medium text-ink hover:underline"
+                      className="inline-block truncate py-0.5 text-[14px] font-medium text-ink hover:underline"
                     >
                       {svc.name}
                     </Link>
@@ -218,5 +217,3 @@ function timeAgo(ms: number): string {
   if (hours < 24) return `${hours}h`
   return `${Math.floor(hours / 24)}d`
 }
-
-export { short }

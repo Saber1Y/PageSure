@@ -49,7 +49,7 @@ export default function ServicesPage() {
                   <div className="min-w-0">
                     <Link
                       href={`/services/${svc.id}`}
-                      className="text-[15px] font-medium tracking-tight text-ink hover:underline"
+                      className="inline-block py-1 text-[15px] font-medium tracking-tight text-ink hover:underline"
                     >
                       {svc.name}
                     </Link>
@@ -91,7 +91,7 @@ export default function ServicesPage() {
                   </Badge>
                   <Link
                     href={`/services/${svc.id}`}
-                    className="text-[13px] text-accent hover:underline"
+                    className="inline-flex items-center rounded-control px-2 py-1 text-[13px] text-accent hover:underline"
                   >
                     Configure
                   </Link>

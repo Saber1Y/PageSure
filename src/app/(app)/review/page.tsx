@@ -101,7 +101,7 @@ export default function ReviewPage() {
             </p>
           </div>
           <div className="pt-4">
-            <Link href="/policies" className="text-[13px] text-accent hover:underline">
+            <Link href="/policies" className="inline-flex items-center rounded-control px-2 py-1 text-[13px] text-accent hover:underline">
               Edit policies
             </Link>
           </div>
