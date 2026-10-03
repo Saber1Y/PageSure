@@ -32,7 +32,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               <Nav />
             </div>
             <div className="ml-auto shrink-0 lg:ml-0">
-              <AccountChip name={user.displayName} email={user.email} />
+              <AccountChip name={user.displayName} email={user.email} wallet={user.walletPublicKey} />
             </div>
           </div>
         </div>
