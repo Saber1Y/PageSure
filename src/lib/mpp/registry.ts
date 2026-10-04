@@ -76,6 +76,26 @@ export interface VerifiedPayment {
 const captured = new Map<string, VerifiedPayment>()
 
 /**
+ * The settlement each mppx instance observed, keyed by the instance itself.
+ *
+ * Keying by `externalId` does not work, and the reason is worth recording because it is not
+ * obvious. A paid request spans TWO HTTP requests: the first is answered 402 and mints a challenge
+ * carrying `externalId`, the second presents the credential for that challenge. The gateway mints a
+ * NEW request row per HTTP request, so the id it is holding when the payment lands is not the id the
+ * settlement reports - the receipt carries the externalId from the original challenge.
+ *
+ * Waiting on the id therefore always timed out, even though `payment.success` had fired and the
+ * money had moved. Worse than a wasted wait: the gateway answered 400, served nothing, and left the
+ * row reading `challenged`, so not even the charged_not_delivered incident path could record that a
+ * payment had happened.
+ *
+ * An instance is the right scope. One mppx instance serves one incoming request and can settle at
+ * most one payment, so its own promise is unambiguous - and unlike a module-level "current call" it
+ * stays correct when requests overlap.
+ */
+const settledByInstance = new WeakMap<object, Promise<VerifiedPayment>>()
+
+/**
  * Build a charge method whose verified payments are captured for the caller.
  *
  * `externalId` is set by the caller to the request row id, so the 402 attempt and the
@@ -103,15 +123,47 @@ export function buildChargeMppx(config: { recipient: string; currency: string })
     ],
   })
 
+  let resolveSettled: ((value: VerifiedPayment) => void) | undefined
+  const settled = new Promise<VerifiedPayment>((resolve) => {
+    resolveSettled = resolve
+  })
+  settledByInstance.set(mppx, settled)
+
   mppx.on('payment.success', (event) => {
     const externalId = event.receipt.externalId ?? null
     const reference = event.receipt.reference
     const source = readCredentialSource(event.credential)
-    if (!externalId) return
-    captured.set(externalId, { reference, source, externalId })
+    const value = { reference, source, externalId }
+    if (externalId) captured.set(externalId, value)
+    resolveSettled?.(value)
   })
 
   return mppx
+}
+
+/**
+ * Wait for the payment this mppx instance settled, if any.
+ *
+ * Resolves null on timeout rather than hanging a request forever. Never rejects: a caller that
+ * gets null treats the request as unpaid, which is the safe direction.
+ */
+export async function settledPayment(
+  instance: object,
+  timeoutMs = 20000,
+): Promise<VerifiedPayment | null> {
+  const settled = settledByInstance.get(instance)
+  if (!settled) return null
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      settled,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 /** Read and consume the captured payment for a request row. */

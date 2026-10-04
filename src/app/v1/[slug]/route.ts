@@ -8,7 +8,8 @@ import {
   markVerified,
   network,
   payerFromDid,
-  takeVerifiedPayment,
+  settledPayment,
+  type VerifiedPayment,
 } from '@/lib/mpp/registry'
 import { runUpstream, UpstreamError } from '@/lib/upstream'
 import {
@@ -195,7 +196,10 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
     policyTrace: preflightTrace,
   } as Parameters<typeof recordRequest>[0])
 
-  let challengeResponse: Response
+  // Set when the caller must be challenged, or when the request is malformed. Left null on the
+  // success path, where `payment` is what matters.
+  let challengeResponse: Response | null = null
+  let payment: VerifiedPayment | null = null
   try {
     const mppx = buildChargeMppx({
       recipient: requireSettlementRecipient(service.organizationId),
@@ -214,9 +218,23 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
       headers.set('X-Pagesure-Request-Id', requestId)
       challengeResponse = new Response(await challenge.text(), { status: 402, headers })
     } else {
-      // No credential supplied but also no challenge: the caller already paid in an
-      // earlier request. Treat as a protocol error rather than serving for free.
-      challengeResponse = problem(400, 'unexpected_state', 'payment state could not be determined')
+      // Not a challenge, so either the payment settled or the caller is unpayable.
+      //
+      // This WAITS rather than reading `captured` directly, because `payment.success` is emitted
+      // asynchronously after charge() returns. A synchronous read always missed, and a miss here is
+      // expensive: mppx settles inside verify(), so the money had already left the payer while the
+      // gateway answered 400, served nothing, and left the request row reading `challenged` - not
+      // even the charged_not_delivered incident path could fire, because nothing recorded that a
+      // payment had happened at all.
+      // Scoped to this mppx instance, not to requestId: the settlement reports the externalId
+      // from the challenge minted on the PREVIOUS http request, so a lookup by the id minted here
+      // would always miss even though the money had moved.
+      payment = await settledPayment(mppx)
+      if (!payment) {
+        // No credential supplied, no challenge, and no receipt: the caller claims to have paid in an
+        // earlier request but there is no evidence of it. Refuse rather than serve for free.
+        challengeResponse = problem(400, 'unexpected_state', 'payment state could not be determined')
+      }
     }
   } catch (error) {
     updateRequest(requestId, { status: 'failed' })
@@ -232,12 +250,14 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
     return problem(402, 'payment_failed', message, { requestId })
   }
 
-  if (challengeResponse.status === 400) return challengeResponse
+  // Only reached on the malformed path; a settled payment skips it entirely.
+  if (challengeResponse?.status === 400) return challengeResponse
 
-  const payment = takeVerifiedPayment(requestId)
   if (!payment) {
-    // The response was neither a 402 nor a captured verification.
-    return challengeResponse
+    return (
+      challengeResponse ??
+      problem(400, 'unexpected_state', 'payment state could not be determined')
+    )
   }
 
   // ---- PHASE 3: authoritative policy on the verified payer. -------------
