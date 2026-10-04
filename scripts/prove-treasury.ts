@@ -17,13 +17,14 @@
 
 import { Keypair } from '@stellar/stellar-sdk'
 import { and, eq } from 'drizzle-orm'
-import { existsSync, rmSync } from 'node:fs'
+
+import { closeScratchDatabase } from './scratch-db'
 
 const SCRATCH = './data/treasury-proof.db'
 
 process.env.DATABASE_URL = SCRATCH
 
-if (existsSync(SCRATCH)) rmSync(SCRATCH)
+closeScratchDatabase(SCRATCH)
 
 const { runMigrations } = await import('../src/lib/db/migrate')
 const { db } = await import('../src/lib/db/client')
@@ -261,7 +262,7 @@ function throws(fn: () => unknown): string {
   }
 }
 
-if (existsSync(SCRATCH)) rmSync(SCRATCH)
+closeScratchDatabase(SCRATCH)
 
 console.log(`\n${passed} passed, ${failures.length} failed`)
 if (failures.length) {

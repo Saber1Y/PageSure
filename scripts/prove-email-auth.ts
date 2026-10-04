@@ -12,7 +12,8 @@
  */
 
 import { eq } from 'drizzle-orm'
-import { existsSync, rmSync } from 'node:fs'
+
+import { closeScratchDatabase } from './scratch-db'
 
 const SCRATCH = './data/email-auth-proof.db'
 
@@ -21,7 +22,7 @@ const SCRATCH = './data/email-auth-proof.db'
 process.env.DATABASE_URL = SCRATCH
 process.env.PAGESURE_PUBLIC_ORIGIN = 'http://localhost:3000'
 
-if (existsSync(SCRATCH)) rmSync(SCRATCH)
+closeScratchDatabase(SCRATCH)
 
 const { runMigrations } = await import('../src/lib/db/migrate')
 const { db } = await import('../src/lib/db/client')
@@ -303,7 +304,7 @@ console.log('settlement fails closed without a wallet')
   check('the refusal names the missing setup step', /settlement (wallet|account)/i.test(refusal), refusal)
 }
 
-if (existsSync(SCRATCH)) rmSync(SCRATCH)
+closeScratchDatabase(SCRATCH)
 
 console.log(`\n${passed} passed, ${failures.length} failed`)
 if (failures.length) {

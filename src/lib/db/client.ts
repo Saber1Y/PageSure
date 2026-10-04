@@ -35,5 +35,20 @@ export function db() {
   return instance
 }
 
+/**
+ * Close the database, if one was ever opened.
+ *
+ * Only the proof scripts need this. They delete their scratch database on the way out, and
+ * deleting the main file out from under an open handle leaves the `-wal` and `-shm` sidecars
+ * behind on disk - so the next run starts against a database whose journal belongs to a
+ * database that no longer exists. Closing first is the difference between cleaning up and
+ * appearing to clean up.
+ */
+export function closeDatabase(): void {
+  if (!instance) return
+  instance.$client.close()
+  instance = null
+}
+
 export type Db = ReturnType<typeof db>
 export { schema }

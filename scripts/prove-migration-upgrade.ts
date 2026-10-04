@@ -23,17 +23,15 @@
  */
 
 import { createHash } from 'node:crypto'
-import { existsSync, rmSync } from 'node:fs'
 import { readFileSync } from 'node:fs'
+import { closeScratchDatabase } from './scratch-db'
 
 const SCRATCH = './data/migration-upgrade-proof.db'
 
 // Removed before the script imports anything that opens a database handle. The WAL and SHM
 // sidecars go too: better-sqlite3 checkpoints into them, so deleting only the main file leaves
 // the previous run's data sitting next to the new database.
-for (const suffix of ['', '-wal', '-shm']) {
-  if (existsSync(`${SCRATCH}${suffix}`)) rmSync(`${SCRATCH}${suffix}`)
-}
+closeScratchDatabase(SCRATCH)
 
 process.env.DATABASE_URL = SCRATCH
 
@@ -184,9 +182,7 @@ console.log('the upgraded database is internally consistent')
   check('no user ends up with two memberships in one organization', duplicate.length === 0)
 }
 
-for (const suffix of ['', '-wal', '-shm']) {
-  if (existsSync(`${SCRATCH}${suffix}`)) rmSync(`${SCRATCH}${suffix}`)
-}
+closeScratchDatabase(SCRATCH)
 
 console.log(`\n${passed} passed, ${failures.length} failed`)
 if (failures.length > 0) {
