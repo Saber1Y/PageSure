@@ -23,9 +23,10 @@
  * Runs against a scratch database and deletes it on exit.
  */
 
+import { createHash } from 'node:crypto'
 import { existsSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { Keypair } from '@stellar/stellar-sdk'
+import { Keypair, StrKey, verify as ed25519Verify } from '@stellar/stellar-sdk'
 import { eq } from 'drizzle-orm'
 
 const SCRATCH = './data/auth-ceremony-proof.db'
@@ -43,9 +44,7 @@ for (const suffix of ['', '-wal', '-shm']) {
 const { db } = await import('../src/lib/db/client')
 const { runMigrations } = await import('../src/lib/db/migrate')
 const schema = await import('../src/lib/db/schema')
-const { issueChallenge, verifyChallengeSignature, challengeBytes } = await import(
-  '../src/lib/auth/wallet'
-)
+const { issueChallenge, verifyChallengeSignature } = await import('../src/lib/auth/wallet')
 const session = await import('../src/lib/auth/session')
 
 runMigrations()
@@ -67,9 +66,21 @@ function section(title: string) {
   console.log(`\n${title}`)
 }
 
-/** Sign a challenge exactly as a wallet would: the challenge bytes, with this key. */
+/**
+ * Sign a challenge the way a real wallet does, per SEP-53.
+ *
+ * DELIBERATELY does not import `challengeBytes` from the module under test. This used to, which
+ * made the whole suite tautological: the test signed whatever bytes the verifier hashed, so the
+ * two could never disagree and 20 checks passed against a verifier that rejected every real
+ * wallet on earth. Signing here from the published specification instead is the only version of
+ * this test that can fail for the right reason.
+ */
 function sign(challenge: string, keypair: Keypair): string {
-  return keypair.sign(challengeBytes(challenge)).toString('base64url')
+  const hash = createHash('sha256')
+    .update('Stellar Signed Message:\n', 'utf8')
+    .update(challenge, 'utf8')
+    .digest()
+  return keypair.sign(hash).toString('base64url')
 }
 
 let nextChallengeId = 0
@@ -240,6 +251,49 @@ section('Signup rejects an unusable treasury')
 
   // The founder must still be unused, proving none of the rejected calls left a row behind.
   check('rejected signups created nothing', session.findUserByWallet(founder.publicKey()) === null)
+}
+
+section('SEP-53 conformance')
+{
+  // Test vector 1 from SEP-53, verbatim. This pins us to the published standard rather than to
+  // our own idea of it: if someone changes the prefix, drops the hash, or signs raw bytes, this
+  // fails immediately instead of silently rejecting every real wallet in production.
+  const VECTOR_KEY = 'GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L'
+  const VECTOR_MSG = 'Hello, World!'
+  const VECTOR_SIG = 'fO5dbYhXUhBMhe6kId/cuVq/AfEnHRHEvsP8vXh03M1uLpi5e46yO2Q8rEBzu3feXQewcQE5GArp88u6ePK6BA=='
+
+  const vectorHash = createHash('sha256')
+    .update('Stellar Signed Message:\n', 'utf8')
+    .update(VECTOR_MSG, 'utf8')
+    .digest()
+  const vectorSig = Buffer.from(VECTOR_SIG, 'base64')
+  const vectorKey = StrKey.decodeEd25519PublicKey(VECTOR_KEY)
+
+  check(
+    'the SEP-53 test vector verifies against the SEP-53 payload',
+    ed25519Verify(vectorHash, vectorSig, vectorKey),
+    'prefix + sha256 + ed25519 no longer reproduces the published vector',
+  )
+  check(
+    'the same signature does NOT verify over raw message bytes',
+    !ed25519Verify(Buffer.from(VECTOR_MSG, 'utf8'), vectorSig, vectorKey),
+    'raw-byte verification is exactly the bug this suite previously could not see',
+  )
+
+  // And end to end through our own verifier, with a challenge-shaped message. The vector
+  // publishes only a public key, so this signs with a keypair we hold.
+  const { challenge } = issueChallenge()
+  const keypair = Keypair.random()
+  const ours = verifyChallengeSignature(
+    challenge,
+    sign(challenge, keypair),
+    keypair.publicKey(),
+  )
+  check(
+    'a wallet-style signature verifies through verifyChallengeSignature',
+    ours.ok,
+    `got ${JSON.stringify(ours)}`,
+  )
 }
 
 section('Challenges are single use')

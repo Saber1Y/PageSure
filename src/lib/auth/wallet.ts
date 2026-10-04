@@ -1,5 +1,11 @@
 import { StrKey, verify as ed25519Verify } from '@stellar/stellar-sdk'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
+
+/**
+ * The fixed SEP-53 prefix. Not configurable: it is what makes a message signature
+ * domain-separated from a transaction signature.
+ */
+const SEP53_PREFIX = 'Stellar Signed Message:\n'
 
 /**
  * Wallet sign-in (SEP-0007 shape, self-certifying).
@@ -53,11 +59,29 @@ export function issueChallenge(): { challenge: string; expiresAt: number } {
 }
 
 /** The exact bytes a wallet must sign for a given challenge. */
+/**
+ * SEP-53 signing payload for a challenge.
+ *
+ * Stellar standardised off-chain message signing in SEP-53 so that wallets, the CLI and the SDKs
+ * all agree on the bytes. The canonical payload is
+ *
+ *     "Stellar Signed Message:\n" + message
+ *
+ * SHA-256'd, then signed with ed25519. The prefix is the entire point: without it a message
+ * signature is indistinguishable from a transaction signature, and a signature harvested here
+ * could be replayed as one.
+ *
+ * This function returns the HASH, which is what gets signed and what gets verified.
+ *
+ * Freighter implements SEP-53, as does `stellar message sign`. Verifying the raw challenge bytes
+ * instead fails against every real wallet while passing any test that signs using this same
+ * helper - the failure mode is invisible from inside the codebase.
+ */
 export function challengeBytes(challenge: string): Buffer {
   if (!challenge.startsWith(`${DOMAIN}:`)) {
     throw new Error('challenge was not issued by this server')
   }
-  return Buffer.from(challenge, 'utf8')
+  return createHash('sha256').update(SEP53_PREFIX, 'utf8').update(challenge, 'utf8').digest()
 }
 
 export type SignatureCheck =

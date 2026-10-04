@@ -15,6 +15,7 @@
  * whether Freighter can produce one.
  */
 
+import { createHash } from 'node:crypto'
 import { Keypair } from '@stellar/stellar-sdk'
 import { and, eq } from 'drizzle-orm'
 
@@ -31,7 +32,7 @@ const { db } = await import('../src/lib/db/client')
 const { organizations, organizationMembers, users, loginChallenges } = await import(
   '../src/lib/db/schema'
 )
-const { issueChallenge, verifyChallengeSignature, challengeBytes } = await import(
+const { issueChallenge, verifyChallengeSignature } = await import(
   '../src/lib/auth/wallet'
 )
 const { storeChallenge, consumeChallenge } = await import('../src/lib/auth/session')
@@ -52,8 +53,20 @@ function check(name: string, condition: boolean, detail?: string) {
   }
 }
 
-const sign = (keypair: Keypair, challenge: string) =>
-  keypair.sign(challengeBytes(challenge)).toString('base64url')
+/**
+ * Sign the way a wallet does, per SEP-53.
+ *
+ * Deliberately independent of `challengeBytes` from the module under test. Importing it made
+ * this suite unable to detect a verifier that disagrees with every real wallet, which is exactly
+ * what was wrong.
+ */
+const sign = (keypair: Keypair, challenge: string) => {
+  const hash = createHash('sha256')
+    .update('Stellar Signed Message:\n', 'utf8')
+    .update(challenge, 'utf8')
+    .digest()
+  return keypair.sign(hash).toString('base64url')
+}
 
 /** Two tenants, each with an owner, so cross-tenant attempts are expressible. */
 function seedOrg(name: string): { organizationId: string; ownerId: string; operatorId: string } {

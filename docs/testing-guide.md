@@ -1047,6 +1047,12 @@ Stated plainly, because a test guide that overstates itself is worse than none.
   Freighter is unavailable in the headless environment these checks ran in, so they rest on
   `prove:auth`, `prove:treasury` and code review rather than on a signature watched happening.
 
+  What *is* pinned is the signing convention itself: `prove:auth` verifies the published SEP-53
+  test vector, so the server is known to agree with Freighter, `stellar message sign` and the
+  SDKs on the exact bytes. That is the part that used to be wrong and is now covered by a vector
+  rather than by a self-referential helper. Whether Freighter's extension UI completes the flow is
+  still unobserved.
+
 - **There is no way to create a service or a policy through the interface.**
   Both come only from `npm run db:seed`, `Create service` 404s, `/policies` has no edit control,
   and no allowlist or denylist can be changed from the UI.
