@@ -22,6 +22,7 @@
     "prove:signer": "tsx scripts/prove-signer.ts",
     "prove:treasury": "tsx scripts/prove-treasury.ts",
     "prove:settlement": "tsx scripts/prove-settlement.ts",
+    "prove:charge": "tsx scripts/prove-charge.ts",
     "prove:upgrade": "tsx scripts/prove-migration-upgrade.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local src/lib/db/migrate.ts",

@@ -1091,6 +1091,7 @@ They need no configuration, no wallet, and no network.
 | Command                    | Checks | Covers                                             |
 | -------------------------- | ------ | -------------------------------------------------- |
 | `npm run prove:policies`   | 87     | policy creation, caps, allow and deny lists        |
+| `npm run prove:charge`     | 68     | the paid path: delivery, receipt, incidents        |
 | `npm run prove:services`   | 68     | service creation, slugs, prices, policy binding    |
 | `npm run prove:isolation`  | 59     | no cross-tenant reads or writes                    |
 | `npm run prove:email`      | 58     | sign-in tokens, invitations, mail delivery failure |
@@ -1100,7 +1101,7 @@ They need no configuration, no wallet, and no network.
 | `npm run prove:signer`     | 20     | signer policy and transport                        |
 | `npm run prove:commitment` | 20     | commitment construction                            |
 | `npm run prove:upgrade`    | 13     | migrating a populated older database               |
-| **Total**                  | **428**|                                                    |
+| **Total**                  | **496**|                                                    |
 
 Expect `N passed, 0 failed` from each, where `N` matches the table.
 If a count differs, the suite changed: read the diff rather than adjusting the expectation to
@@ -1210,7 +1211,16 @@ If one survives a proof run, that run has a bug: every scratch database must be 
 
 Stated plainly, because a test guide that overstates itself is worse than none.
 
-- **No funded Stellar account was available, so no money moved in this write-up.**
+- **`prove:charge` substitutes the payment method and the upstream, and that is a real limit.**
+  It proves the gateway's own billing, recording and policy code - that a settled payment is
+  delivered, receipted, and recorded, and that a held or mismatched one is not charged. It cannot
+  prove the settlement itself. `charge_not_delivered` in particular is unreachable there: it needs a
+  decision that is ALLOW in preflight and BLOCK after verification, which requires a spend cap to
+  move across the boundary between the two, i.e. a real settlement. The mismatch path reaches the
+  same incident record and is asserted instead.
+  The one real settlement observed on testnet is the run recorded in Part 4.
+
+- **No funded Stellar account was available when this guide was first written.**
   Parts 1 to 3 stop at the 402 challenge because that is as far as the product goes without a
   funded payer and a working upstream.
   Settlement, the playground waterfall, `/settlements` and real upstream responses are all
@@ -1255,8 +1265,9 @@ Stated plainly, because a test guide that overstates itself is worse than none.
   that the form cannot yet provision.
 
 - **The gateway, policy engine and console screens have no automated coverage.**
-  The 428 proof checks cover service and policy creation, auth, isolation, settlement refusals,
+  The 496 proof checks cover service and policy creation, auth, isolation, settlement refusals,
   signer policy and migrations.
+
   Parts 1 to 7 were walked by hand.
 
 - **Charge mode can charge without delivering.**

@@ -10,6 +10,7 @@
  * shown in the dashboard, so it is always visible which real API served a call.
  */
 
+import { upstreamRunnerOverride } from '@/lib/testing/overrides'
 export interface SearchResult {
   title: string
   url: string
@@ -326,6 +327,12 @@ export async function runUpstream(ctx: UpstreamContext): Promise<{
   status: number
   body: unknown
 }> {
+  // Test-only substitution point. Unset in production, and settable only by scripts/prove-charge,
+  // so the gateway's paid path can be proven without reaching a real provider. See
+  // lib/testing/overrides.
+  const override = upstreamRunnerOverride()
+  if (override) return override(ctx)
+
   switch (ctx.upstreamKind) {
     case 'search': {
       const result = await runSearch(ctx)

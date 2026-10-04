@@ -2,6 +2,7 @@ import { Keypair, StrKey } from '@stellar/stellar-sdk'
 import { Mppx, Store, stellar as stellarCharge } from '@stellar/mpp/charge/server'
 import { stellar as stellarChannel } from '@stellar/mpp/channel/server'
 import { USDC_SAC_TESTNET, type Logger as MppLogger } from '@stellar/mpp'
+import { chargeFactoryOverride } from '@/lib/testing/overrides'
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
 import { requests } from '@/lib/db/schema'
@@ -103,7 +104,7 @@ const settledByInstance = new WeakMap<object, Promise<VerifiedPayment>>()
  * receives the cryptographically verified credential, which is the only trustworthy
  * source of payer identity.
  */
-export function buildChargeMppx(config: { recipient: string; currency: string }) {
+function realChargeMppx(config: { recipient: string; currency: string }) {
   const mppx = Mppx.create({
     secretKey: process.env.MPP_SECRET_KEY ?? 'pagesure-dev-mpp-secret',
     methods: [
@@ -123,13 +124,36 @@ export function buildChargeMppx(config: { recipient: string; currency: string })
     ],
   })
 
+  return mppx
+}
+
+type ChargeInstance = ReturnType<typeof realChargeMppx>
+
+/**
+ * Build the charge instance the gateway uses.
+ *
+ * A thin seam exists here so the paid path can be proven without a funded account. It is unset in
+ * production and settable only by scripts/prove-charge; the real construction lives in
+ * `realChargeMppx` above so this function's return type stays exactly what callers get in
+ * production. See lib/testing/overrides for why the seam is necessary.
+ */
+export function buildChargeMppx(config: { recipient: string; currency: string }): ChargeInstance {
+  const override = chargeFactoryOverride()
+  const instance = (
+    override ? override(config) : realChargeMppx(config)
+  ) as ChargeInstance
+
+  // Capture wiring lives HERE rather than inside realChargeMppx, so it wraps whatever instance is in
+  // use. It is the gateway's own responsibility - knowing which request a settled payment belongs
+  // to - and not a detail of how mppx is constructed. Keeping it inside the real builder also meant
+  // the test seam silently skipped it, which is the sort of thing that makes a seam untrustworthy.
   let resolveSettled: ((value: VerifiedPayment) => void) | undefined
   const settled = new Promise<VerifiedPayment>((resolve) => {
     resolveSettled = resolve
   })
-  settledByInstance.set(mppx, settled)
+  settledByInstance.set(instance, settled)
 
-  mppx.on('payment.success', (event) => {
+  instance.on('payment.success', (event) => {
     const externalId = event.receipt.externalId ?? null
     const reference = event.receipt.reference
     const source = readCredentialSource(event.credential)
@@ -138,7 +162,7 @@ export function buildChargeMppx(config: { recipient: string; currency: string })
     resolveSettled?.(value)
   })
 
-  return mppx
+  return instance
 }
 
 /**
