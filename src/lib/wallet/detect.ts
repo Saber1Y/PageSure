@@ -26,8 +26,15 @@ import { getAddress, getNetworkDetails, isConnected, requestAccess, signMessage 
  */
 
 export type WalletDetection =
-  /** Extension reachable and answering. */
-  | { kind: 'ready'; network: string | null }
+  /**
+   * Extension reachable and answering.
+   *
+   * publicKey is the address the extension REPORTS it will sign with. It is an untrusted
+   * client-side claim, NOT proof of the signer: an extension can report one account and
+   * sign with another. Callers may use it to warn the user early, but must never block on
+   * it — only the server-side signature check can decide who authenticated.
+   */
+  | { kind: 'ready'; network: string | null; publicKey: string | null }
   /** Reachable, but refusing because it is locked or has not granted this site access. */
   | { kind: 'locked'; detail: string }
   /** Reachable, but refused for some other reason (declined prompt, unknown failure). */
@@ -104,7 +111,9 @@ export async function detectWallet(): Promise<WalletDetection> {
     // Advisory only: a challenge signature is network-agnostic.
   }
 
-  return { kind: 'ready', network, ...(publicKey ? {} : {}) }
+  // The resolved address travels with the result on purpose: it is the only place the client
+  // learns WHICH account will sign, which is what makes a pre-sign mismatch check possible.
+  return { kind: 'ready', network, publicKey }
 }
 
 /**
