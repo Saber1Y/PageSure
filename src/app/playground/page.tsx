@@ -1,4 +1,5 @@
 import { serviceRollups } from '@/lib/metering/aggregates'
+import { requireUserPage } from '@/lib/auth/session'
 import { PlaygroundClient } from '@/components/dashboard/playground-client'
 import { Brand } from '@/components/ui/brand'
 import { formatAmount } from '@/lib/money'
@@ -6,8 +7,9 @@ import { USDC_SAC_TESTNET } from '@stellar/mpp'
 
 export const dynamic = 'force-dynamic'
 
-export default function PlaygroundPage() {
-  const services = serviceRollups().filter((s) => s.status === 'live')
+export default async function PlaygroundPage() {
+  const user = await requireUserPage()
+  const services = serviceRollups(user.organizationId).filter((s) => s.status === 'live')
   const chargeServices = services.filter((s) => s.mode === 'charge')
 
   return (
