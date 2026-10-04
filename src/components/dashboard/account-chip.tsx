@@ -9,10 +9,14 @@ export function AccountChip({
   name,
   email,
   wallet,
+  organization,
+  role,
 }: {
   name: string
   email: string | null
   wallet: string | null
+  organization: string
+  role: 'owner' | 'operator' | 'analyst'
 }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -92,6 +96,14 @@ export function AccountChip({
         <div className="absolute right-0 top-full z-30 mt-2 w-64 rounded-card border border-line bg-surface p-1 shadow-lg">
           <div className="px-3 py-2">
             <p className="text-[13px] font-medium text-ink">{name}</p>
+            {/* The organization is shown above the person, not below it. With more than one
+                tenant on the same browser the question is never "who am I", it is "which
+                organization am I looking at", and that must be answerable without opening a
+                menu or reading a URL. */}
+            <p className="mt-1 truncate text-[12px] text-ink-2" title={organization}>
+              {organization}
+              <span className="ml-1 text-ink-4">· {role}</span>
+            </p>
             {email ? <p className="mono text-[11px] text-ink-4">{email}</p> : null}
             {wallet ? (
               <p className="mono text-[11px] text-ink-4" title={wallet}>

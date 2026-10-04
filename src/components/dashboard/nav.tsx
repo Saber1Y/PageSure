@@ -18,6 +18,7 @@ const LINKS = [
   { href: '/review', label: 'Review' },
   { href: '/settlements', label: 'Settlements' },
   { href: '/incidents', label: 'Incidents' },
+  { href: '/settings', label: 'Settings' },
 ]
 
 export function Nav() {
