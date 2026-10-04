@@ -23,7 +23,6 @@
  * Runs against a scratch database and deletes it on exit.
  */
 
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { existsSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { Keypair } from '@stellar/stellar-sdk'
@@ -42,13 +41,14 @@ for (const suffix of ['', '-wal', '-shm']) {
 }
 
 const { db } = await import('../src/lib/db/client')
+const { runMigrations } = await import('../src/lib/db/migrate')
 const schema = await import('../src/lib/db/schema')
 const { issueChallenge, verifyChallengeSignature, challengeBytes } = await import(
   '../src/lib/auth/wallet'
 )
 const session = await import('../src/lib/auth/session')
 
-migrate(db(), { migrationsFolder: resolve(process.cwd(), 'drizzle') })
+runMigrations()
 
 let passed = 0
 const failures: string[] = []

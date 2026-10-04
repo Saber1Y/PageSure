@@ -31,7 +31,6 @@
 import { eq } from 'drizzle-orm'
 import { Keypair, StrKey } from '@stellar/stellar-sdk'
 import { toBig } from '../src/lib/money'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { existsSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -51,6 +50,7 @@ function resCRATCH(suffix: string) {
 
 // Imported after the environment is set, deliberately.
 const { db } = await import('../src/lib/db/client')
+const { runMigrations } = await import('../src/lib/db/migrate')
 const schema = await import('../src/lib/db/schema')
 const { createOrganizationWithOwner, findUserByWallet } = await import('../src/lib/auth/session')
 const { resolveServiceBySlug } = await import('../src/lib/services/registry')
@@ -70,7 +70,7 @@ const { requireSettlementRecipient, requireCommitmentKeyBytes } = await import(
 )
 import type { PolicyTrace } from '../src/lib/policy/types'
 
-migrate(db(), { migrationsFolder: resolve(process.cwd(), 'drizzle') })
+runMigrations()
 
 // ---------------------------------------------------------------------------
 // Assertion harness

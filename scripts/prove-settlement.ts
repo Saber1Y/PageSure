@@ -26,7 +26,6 @@
  */
 
 import { eq } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { existsSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -40,6 +39,7 @@ for (const suffix of ['', '-wal', '-shm']) {
 
 // Imported after the environment is set, deliberately: `db()` caches its handle on first use.
 const { db } = await import('../src/lib/db/client')
+const { runMigrations } = await import('../src/lib/db/migrate')
 const schema = await import('../src/lib/db/schema')
 const { createOrganizationWithOwner } = await import('../src/lib/auth/session')
 const { resolveServiceBySlug } = await import('../src/lib/services/registry')
@@ -51,7 +51,7 @@ const { handleChannelRequest } = await import('../src/lib/sessions/gateway')
 
 process.env.CHANNEL_FACTORY_C ??= 'CDENABPOYPNPJFP2TEFO5UJFYCA7OGG6Y7TBU5XFXZ3WJJN5FKOLXN4B'
 
-migrate(db(), { migrationsFolder: resolve(process.cwd(), 'drizzle') })
+runMigrations()
 
 // ---------------------------------------------------------------------------
 // Assertion harness
