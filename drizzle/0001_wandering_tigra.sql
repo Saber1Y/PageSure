@@ -1,0 +1,1 @@
+ALTER TABLE `organizations` ADD `commitment_public_key` text;
