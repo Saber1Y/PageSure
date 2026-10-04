@@ -1,5 +1,6 @@
 import { db } from '@/lib/db/client'
 import {
+  organizations,
   policies,
   policyAssets,
   policyNetworks,
@@ -8,19 +9,25 @@ import {
   users,
 } from '@/lib/db/schema'
 import { USDC_SAC_TESTNET, STELLAR_TESTNET } from '@stellar/mpp'
-import { configuredOperatorWallet } from '@/lib/auth/wallet'
+import { StrKey } from '@stellar/stellar-sdk'
 import { eq } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
 
 /**
- * Seed policies and services.
+ * Seed a DEMO organization with sample policies and services.
  *
- * There is deliberately NO account seeding here. The console operator is created the
- * first time somebody proves control of PROVIDER_RECIPIENT_G, so there is no credential
- * in .env, no password hash in the database, and nothing to rotate or leak. This script
- * only lays down the sellable side: what is being sold, and who may buy it.
+ * There is deliberately NO account seeding here in the general case. An operator is created
+ * only when somebody proves control of a wallet they own, and their organization is created
+ * by that same proof. There is no credential in .env, no password hash in the database, and
+ * nothing to rotate or leak.
  *
- * Idempotent: re-running updates the demo rows rather than duplicating them.
+ * This script therefore does nothing at all unless DEMO_OWNER_WALLET names a wallet. That
+ * guard exists because policies and services are organization-owned now: seeding them
+ * without an owner would create rows no dashboard could ever reach, which is worse than
+ * having no demo data. Set it to the wallet you will actually sign in with, and the demo
+ * organization becomes yours to edit like any other.
+ *
+ * Idempotent: re-running updates nothing and creates no duplicates.
  * Prices are in USDC base units at 7 decimals, so 0.01 USDC = '100000'.
  */
 
@@ -28,83 +35,116 @@ function uid(prefix: string): string {
   return `${prefix}_${randomUUID().replace(/-/g, '').slice(0, 20)}`
 }
 
+export const DEMO_ORG_ID = 'org_demo'
+
 export async function seed(): Promise<{ created: boolean; services: number }> {
   const target = db()
 
-  // ---- provider account ---------------------------------------------------
-  // Only a label, and only for the account that already exists because its owner proved
-  // wallet control. If nobody has signed in yet there is nothing to do, and inventing a
-  // user row here is exactly the demo behaviour this replaces.
-  //
-  // Looked up by WALLET, not by "any row with no email": after the auth migration a
-  // leftover legacy row can also have a null email, and relabelling that orphan would
-  // quietly mislabel the real operator's account.
-  let operatorWallet: string | null = null
-  try {
-    operatorWallet = configuredOperatorWallet()
-  } catch {
-    console.log('PROVIDER_RECIPIENT_G is not set: skipping provider label sync')
-  }
-  const existingUser = operatorWallet
-    ? target.select().from(users).where(eq(users.walletPublicKey, operatorWallet)).get()
-    : null
-  if (existingUser) {
-    const displayName = process.env.PROVIDER_LABEL ?? 'PageSure Provider'
-    target.update(users).set({ displayName }).where(eq(users.id, existingUser.id)).run()
-    console.log(`synced provider label for ${existingUser.id} from PROVIDER_LABEL`)
-  } else if (operatorWallet) {
-    console.log('no operator account yet: it is created on first wallet sign-in')
+  const ownerWallet = process.env.DEMO_OWNER_WALLET?.trim()
+  if (!ownerWallet || !StrKey.isValidEd25519PublicKey(ownerWallet)) {
+    console.log('DEMO_OWNER_WALLET not set to a valid Stellar key: nothing to seed.')
+    console.log('Set it to the wallet you will sign in with, then re-run `npm run db:seed`.')
+    return { created: false, services: 0 }
   }
 
-  // ---- policy -------------------------------------------------------------
-  let policy = target.select().from(policies).where(eq(policies.name, 'Standard Access')).get()
-  if (!policy) {
-    policy = {
-      id: uid('pol'),
-      name: 'Standard Access',
-      description:
-        'Default provider policy. Unknown wallets are reviewed rather than trusted; denylisted wallets are refused outright.',
-      // Review, not allow: an unknown wallet should be held, not waved through.
-      unknownAction: 'review',
-      maxAmountPerRequestBase: '5000000', // 0.5 USDC
-      dailyCapPerWalletBase: '100000000', // 100 USDC
-      // Keeps a post-verification deny cheap. A wallet with no grant cannot authorise
-      // an amount large enough to matter before PageSure holds an authoritative payer.
-      ungrantedSpendCapBase: '1000000', // 0.1 USDC
-      rateLimitPerMin: 60,
-      active: true,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
+  const treasury = process.env.DEMO_SETTLEMENT_RECIPIENT?.trim() || ownerWallet
+  if (!StrKey.isValidEd25519PublicKey(treasury)) {
+    throw new Error('DEMO_SETTLEMENT_RECIPIENT is not a valid Stellar account')
+  }
+
+  // The channel commitment key is optional: charge-mode services settle without one. It is
+  // validated up front so a malformed value fails the seed loudly rather than leaving a
+  // demo organization that cannot open channels for reasons nobody can see.
+  const commitmentPublicKey = process.env.DEMO_COMMITMENT_PUBLIC_KEY?.trim() || null
+  if (commitmentPublicKey) {
+    let raw: Buffer
+    try {
+      raw = Buffer.from(StrKey.decodeMed25519PublicKey(commitmentPublicKey))
+    } catch {
+      throw new Error('DEMO_COMMITMENT_PUBLIC_KEY is not a G... (med25519) public key')
     }
-    target.insert(policies).values(policy).run()
-
-    target.insert(policyAssets).values({ id: uid('pas'), policyId: policy.id, assetContract: USDC_SAC_TESTNET }).run()
-    target.insert(policyNetworks).values({ id: uid('pnt'), policyId: policy.id, network: STELLAR_TESTNET }).run()
-    console.log('created policy "Standard Access"')
+    if (raw.length !== 32) throw new Error('DEMO_COMMITMENT_PUBLIC_KEY must decode to 32 bytes')
   }
 
-  // A second policy showing a stricter posture, and a wallet on its denylist so the
-  // BLOCK path is demonstrable without editing anything.
-  let strict = target.select().from(policies).where(eq(policies.name, 'Restricted')).get()
-  if (!strict) {
-    strict = {
-      id: uid('pol'),
-      name: 'Restricted',
-      description: 'Deny by default. Unknown wallets are blocked outright.',
-      unknownAction: 'block',
-      maxAmountPerRequestBase: '1000000',
-      dailyCapPerWalletBase: '10000000',
-      ungrantedSpendCapBase: '100000',
-      rateLimitPerMin: 20,
-      active: true,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    }
-    target.insert(policies).values(strict).run()
-    target.insert(policyAssets).values({ id: uid('pas'), policyId: strict.id, assetContract: USDC_SAC_TESTNET }).run()
-    target.insert(policyNetworks).values({ id: uid('pnt'), policyId: strict.id, network: STELLAR_TESTNET }).run()
-    console.log('created policy "Restricted"')
+  // ---- organization -------------------------------------------------------
+  const existingOrg = target.select().from(organizations).where(eq(organizations.id, DEMO_ORG_ID)).get()
+  if (!existingOrg) {
+    target
+      .insert(organizations)
+      .values({
+        id: DEMO_ORG_ID,
+        name: 'PageSure Demo',
+        settlementRecipient: treasury,
+        commitmentPublicKey,
+        createdAt: Date.now(),
+      })
+      .run()
+    console.log('created demo organization')
+  } else if (commitmentPublicKey && !existingOrg.commitmentPublicKey) {
+    // Backfill rather than insert: re-running the seed must not fail on the existing row.
+    target
+      .update(organizations)
+      .set({ commitmentPublicKey })
+      .where(eq(organizations.id, DEMO_ORG_ID))
+      .run()
+    console.log('backfilled demo commitment key')
   }
+
+  // ---- owner --------------------------------------------------------------
+  const existingUser = target.select().from(users).where(eq(users.walletPublicKey, ownerWallet)).get()
+  if (!existingUser) {
+    target
+      .insert(users)
+      .values({
+        id: uid('usr'),
+        organizationId: DEMO_ORG_ID,
+        walletPublicKey: ownerWallet,
+        displayName: process.env.PROVIDER_LABEL ?? 'PageSure Demo',
+        role: 'owner',
+        createdAt: Date.now(),
+      })
+      .run()
+    console.log(`created demo owner for ${ownerWallet}`)
+  } else if (existingUser.organizationId !== DEMO_ORG_ID) {
+    /*
+     * The wallet is already registered, but under a different organization.
+     *
+     * Silently skipping the insert here produced a demo organization with no members: the
+     * operator signs in successfully, lands on their real organization, and concludes the
+     * seed is broken. Re-homing an existing account is destructive, so this stops instead
+     * and says which organization already owns the wallet.
+     */
+    throw new Error(
+      `DEMO_OWNER_WALLET ${ownerWallet} already belongs to organization ${existingUser.organizationId}. ` +
+        'Point DEMO_OWNER_WALLET at a fresh wallet, or clear the demo organization and sign up through /login.',
+    )
+  }
+
+  // ---- policies -----------------------------------------------------------
+  const policyId = ensurePolicy(target, {
+    name: 'Standard Access',
+    description:
+      'Default provider policy. Unknown wallets are reviewed rather than trusted; denylisted wallets are refused outright.',
+    unknownAction: 'review',
+    maxAmountPerRequestBase: '5000000', // 0.5 USDC
+    dailyCapPerWalletBase: '100000000', // 100 USDC
+    // Keeps a post-verification deny cheap. A wallet with no grant cannot authorise an
+    // amount large enough to matter before PageSure holds an authoritative payer.
+    ungrantedSpendCapBase: '1000000', // 0.1 USDC
+    rateLimitPerMin: 60,
+  })
+
+  // A second policy showing a stricter posture, so the BLOCK path is demonstrable without
+  // editing anything.
+  const strictPolicyId = ensurePolicy(target, {
+    name: 'Restricted',
+    description: 'Deny by default. Unknown wallets are blocked outright.',
+    unknownAction: 'block',
+    maxAmountPerRequestBase: '1000000',
+    dailyCapPerWalletBase: '10000000',
+    ungrantedSpendCapBase: '100000',
+    rateLimitPerMin: 20,
+  })
 
   // ---- services -----------------------------------------------------------
   const definitions = [
@@ -115,7 +155,7 @@ export async function seed(): Promise<{ created: boolean; services: number }> {
       priceBase: '100000', // 0.01 USDC
       mode: 'charge' as const,
       upstreamKind: 'search',
-      policyId: policy.id,
+      policyId,
       upstreamConfig: {},
     },
     {
@@ -125,7 +165,7 @@ export async function seed(): Promise<{ created: boolean; services: number }> {
       priceBase: '20000', // 0.002 USDC
       mode: 'channel' as const,
       upstreamKind: 'market',
-      policyId: policy.id,
+      policyId,
       upstreamConfig: {},
     },
     {
@@ -135,7 +175,7 @@ export async function seed(): Promise<{ created: boolean; services: number }> {
       priceBase: '500000', // 0.05 USDC
       mode: 'charge' as const,
       upstreamKind: 'summarize',
-      policyId: strict.id,
+      policyId: strictPolicyId,
       upstreamConfig: {},
     },
   ]
@@ -149,6 +189,7 @@ export async function seed(): Promise<{ created: boolean; services: number }> {
       .insert(services)
       .values({
         id: uid('svc'),
+        organizationId: DEMO_ORG_ID,
         slug: def.slug,
         name: def.name,
         description: def.description,
@@ -168,28 +209,78 @@ export async function seed(): Promise<{ created: boolean; services: number }> {
     created++
   }
 
-  // Link both services to both policies so the Policies screens show real usage.
-  for (const policyId of [policy.id, strict.id]) {
+  // Link every service to both policies so the Policies screens show real usage.
+  for (const pid of [policyId, strictPolicyId]) {
     for (const def of definitions) {
       const svc = target.select().from(services).where(eq(services.slug, def.slug)).get()
       if (!svc) continue
       const linked = target
         .select()
         .from(policyServiceLinks)
-        .where(eq(policyServiceLinks.policyId, policyId))
+        .where(eq(policyServiceLinks.policyId, pid))
         .all()
         .some((l) => l.serviceId === svc.id)
       if (!linked) {
-        target
-          .insert(policyServiceLinks)
-          .values({ id: uid('psl'), policyId, serviceId: svc.id })
-          .run()
+        target.insert(policyServiceLinks).values({ id: uid('psl'), organizationId: DEMO_ORG_ID, policyId: pid, serviceId: svc.id }).run()
       }
     }
   }
 
-  console.log(`services created: ${created}, total services: ${target.select().from(services).all().length}`)
+  console.log(`services created: ${created}`)
   return { created: created > 0, services: created }
+}
+
+type PolicyInput = {
+  name: string
+  description: string
+  unknownAction: 'allow' | 'review' | 'block'
+  maxAmountPerRequestBase: string
+  dailyCapPerWalletBase: string
+  ungrantedSpendCapBase: string
+  rateLimitPerMin: number
+}
+
+function ensurePolicy(target: ReturnType<typeof db>, input: PolicyInput): string {
+  const existing = target
+    .select()
+    .from(policies)
+    .where(eq(policies.organizationId, DEMO_ORG_ID))
+    .all()
+    .find((p) => p.name === input.name)
+
+  if (existing) return existing.id
+
+  const id = uid('pol')
+  const now = Date.now()
+  target
+    .insert(policies)
+    .values({
+      id,
+      organizationId: DEMO_ORG_ID,
+      name: input.name,
+      description: input.description,
+      unknownAction: input.unknownAction,
+      maxAmountPerRequestBase: input.maxAmountPerRequestBase,
+      dailyCapPerWalletBase: input.dailyCapPerWalletBase,
+      ungrantedSpendCapBase: input.ungrantedSpendCapBase,
+      rateLimitPerMin: input.rateLimitPerMin,
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run()
+
+  target
+    .insert(policyAssets)
+    .values({ id: uid('pas'), organizationId: DEMO_ORG_ID, policyId: id, assetContract: USDC_SAC_TESTNET })
+    .run()
+  target
+    .insert(policyNetworks)
+    .values({ id: uid('pnt'), organizationId: DEMO_ORG_ID, policyId: id, network: STELLAR_TESTNET })
+    .run()
+
+  console.log(`created policy "${input.name}"`)
+  return id
 }
 
 const isDirectRun = process.argv[1]?.includes('seed')

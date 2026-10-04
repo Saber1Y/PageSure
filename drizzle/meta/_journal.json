@@ -5,15 +5,36 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1791023121862,
-      "tag": "0000_init",
+      "when": 1791067973197,
+      "tag": "0000_complex_zarek",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "6",
-      "when": 1791057657862,
-      "tag": "0001_wallet_auth",
+      "when": 1791069894039,
+      "tag": "0001_wandering_tigra",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791071146239,
+      "tag": "0002_org_commitment_signer",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791107134350,
+      "tag": "0003_bumpy_lilandra",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1791111199976,
+      "tag": "0004_treasury_challenge",
       "breakpoints": true
     }
   ]

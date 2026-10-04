@@ -9,20 +9,169 @@ import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqli
  */
 
 /**
+ * A tenant. One company that runs services through PageSure.
+ *
+ * This is the root of every ownership question in the database. `requireUser()` returns an
+ * organizationId and every provider-owned query filters on it, so an operator can only ever
+ * reach rows their organization owns.
+ *
+ * `settlementRecipient` is the organization's treasury: the Stellar account that receives
+ * payment for that organization's services. It is NOT an authentication credential and is
+ * unrelated to any operator's login wallet — an organization may settle to an account no one
+ * on the team can sign for. PageSure never stores a secret for it; the chain does the paying.
+ */
+export const organizations = sqliteTable(
+  'organizations',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    /**
+     * Treasury that receives this organization's settlements. Every service inherits it;
+     * a per-service override is a deliberate future extension, not an implicit fallback.
+     *
+     * Nullable on purpose. A company can finish signup with nothing but a work email, and
+     * connecting a wallet is a later, separate step. Forcing the wallet first is what makes
+     * a payments product unusable for anyone who has not installed an extension yet. The
+     * cost of null is that the organization cannot take money until a treasury is set, which
+     * is exactly the constraint that should apply: an organization with no settlement
+     * account has nowhere to be paid.
+     */
+    settlementRecipient: text('settlement_recipient'),
+    /**
+     * Channel commitment key for this organization, as the G... (med25519) encoding.
+     *
+     * Separate from settlementRecipient on purpose, because they answer different questions.
+     * `settlementRecipient` is a Stellar *account*: it receives SAC payouts and authorises
+     * `settle`/`close` through `require_auth`. This key is the *off-chain* half: it signs the
+     * cumulative-amount commitments the contract verifies with `ed25519_verify`, and its
+     * private half must never leave the operator's control.
+     *
+     * Nullable because an organization that only runs charge-mode services never opens a
+     * channel and so needs no commitment key. A channel attempt against an organization
+     * without one is refused rather than silently falling back to a shared provider key:
+     * a fallback would let any organization settle into another's channel.
+     */
+    commitmentPublicKey: text('commitment_public_key'),
+    /**
+     * HTTPS endpoint of this organization's channel signer service.
+     *
+     * PageSure holds no channel private key. A withdrawal needs a signature from the
+     * organization's commitment key, so the organization runs a signer and PageSure asks it to
+     * sign commitment bytes the organization does not get to choose. Nullable because a
+     * charge-mode organization never needs one.
+     */
+    commitmentSignerUrl: text('commitment_signer_url'),
+    /**
+     * Name of the environment variable holding the bearer token for that signer, NOT the
+     * token itself.
+     *
+     * Storing the credential here would put it in the database, in every dump of it, and in
+     * every backup, and a leaked token lets an attacker request signatures. Holding only the
+     * variable name keeps the secret in the operator's environment, where it belongs, while
+     * still letting each organization have its own token.
+     */
+    commitmentSignerTokenEnv: text('commitment_signer_token_env'),
+    /**
+     * True once an operator proved control of `settlementRecipient` by signing a challenge.
+     *
+     * Separate from the presence of the address because the two mean different things. A
+     * pasted address is a claim; a verified one is a proven fact, and the difference decides
+     * whether the organization may receive real settlements.
+     */
+    treasuryVerified: integer('treasury_verified', { mode: 'boolean' }).notNull().default(false),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('organizations_recipient_idx').on(t.settlementRecipient)],
+)
+
+/**
+ * Who belongs to which organization, and what they may do there.
+ *
+ * Membership is what authorization is actually built on. The signing wallet proves who
+ * someone is; it does not decide what they are allowed to touch. An organization with a CEO,
+ * an operations lead and a developer should not hand all three the same authority over the
+ * settlement wallet, so the role lives on the edge between a user and an organization
+ * rather than on the user.
+ */
+export const organizationMembers = sqliteTable(
+  'organization_members',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /**
+     * owner    full control, including the settlement wallet and membership itself
+     * operator services, policies and review, but not the treasury
+     * analyst  read-only
+     */
+    role: text('role', { enum: ['owner', 'operator', 'analyst'] }).notNull().default('operator'),
+    /** Null for the owner created at signup; set when an owner invites someone. */
+    invitedBy: text('invited_by').references(() => users.id),
+    /** Null while an invitation is outstanding, set once the invitee accepts. */
+    acceptedAt: integer('accepted_at'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('organization_members_unique_idx').on(t.organizationId, t.userId),
+    index('organization_members_user_idx').on(t.userId),
+  ],
+)
+
+/**
+ * Single-use email sign-in and verification tokens.
+ *
+ * The stored value is a SHA-256 hash, not the token. A magic link is a bearer credential
+ * delivered over email, so anyone who can read the database must not be able to log in with
+ * it; hashing means a dump yields nothing usable. The row is deleted or marked consumed on
+ * first use so a link that lands in a shared inbox cannot be replayed.
+ */
+export const emailTokens = sqliteTable(
+  'email_tokens',
+  {
+    id: text('id').primaryKey(),
+    email: text('email').notNull(),
+    tokenHash: text('token_hash').notNull(),
+    /** signin proves an address; invite binds the address to an organization and role. */
+    purpose: text('purpose', { enum: ['signin', 'invite'] }).notNull(),
+    organizationId: text('organization_id').references(() => organizations.id, {
+      onDelete: 'cascade',
+    }),
+    role: text('role', { enum: ['operator', 'analyst'] }),
+    expiresAt: integer('expires_at').notNull(),
+    consumedAt: integer('consumed_at'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    index('email_tokens_email_idx').on(t.email),
+    uniqueIndex('email_tokens_token_idx').on(t.tokenHash),
+    index('email_tokens_expiry_idx').on(t.expiresAt),
+  ],
+)
+
+/**
  * Provider operators.
  *
  * There is no password column and no seeded row. An account is created the first time
- * someone proves control of the settlement wallet, so the credential lives in the
- * operator's wallet rather than in a .env file that ships with the repo.
+ * someone proves control of a wallet they own, so the credential lives in that wallet
+ * rather than in a .env file that ships with the repo.
  *
- * `walletPublicKey` is the ROOT of trust: it must equal PROVIDER_RECIPIENT_G. A passkey
- * is a second, revocable way in, and is only ever created from an already-authenticated
- * session, so a passkey can never be the thing that bootstraps an account.
+ * `walletPublicKey` is the ROOT of trust, but it is SELF-CERTIFYING: the signature proves
+ * control of whatever key the client names. That is authentication only. Authorization is
+ * `user -> organization -> role`, enforced by requireUser(); possession of a valid signature
+ * never implies access to an organization's data.
+ *
+ * A passkey is a second, revocable way in, and is only ever created from an
+ * already-authenticated session, so a passkey can never bootstrap an account.
  */
 export const users = sqliteTable(
   'users',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id').references(() => organizations.id, { onDelete: 'cascade' }),
     /**
      * Display/contact only. Nullable because wallet sign-in has no email to collect, and
      * nothing authenticates against it.
@@ -31,7 +180,15 @@ export const users = sqliteTable(
     /** Stellar ed25519 public key that signed the enrolment challenge. Unique. */
     walletPublicKey: text('wallet_public_key'),
     displayName: text('display_name').notNull(),
-    role: text('role', { enum: ['owner', 'operator'] })
+    /**
+     * Denormalized copy of the active membership role, kept only so legacy queries and the
+     * account chip have something to read.
+     *
+     * `organization_members.role` is the authority. This column is written alongside it and
+     * never consulted for an authorization decision, so the two cannot drift into a state
+     * where the copy grants something the membership does not.
+     */
+    role: text('role', { enum: ['owner', 'operator', 'analyst'] })
       .notNull()
       .default('owner'),
     createdAt: integer('created_at').notNull(),
@@ -39,6 +196,7 @@ export const users = sqliteTable(
   (t) => [
     uniqueIndex('users_email_idx').on(t.email),
     uniqueIndex('users_wallet_idx').on(t.walletPublicKey),
+    index('users_organization_idx').on(t.organizationId),
   ],
 )
 
@@ -58,9 +216,19 @@ export const loginChallenges = sqliteTable(
     id: text('id').primaryKey(),
     /** The exact bytes the wallet signs. Never store the signature. */
     challenge: text('challenge').notNull(),
-    purpose: text('purpose', { enum: ['enrol', 'login'] }).notNull(),
+    /**
+     * `enrol` proves a wallet at signup, `login` proves it again at sign-in, and `treasury`
+     * proves an account may receive an organization's money.
+     *
+     * Treasury is separate rather than a flavour of `enrol` because it authorizes money, not
+     * access. A challenge for one must never be redeemable as the other, and the distinction
+     * has to be visible in the row rather than inferred from its contents.
+     */
+    purpose: text('purpose', { enum: ['enrol', 'login', 'treasury'] }).notNull(),
     /** Wallet the challenge was issued to; null before the client states which one. */
     walletPublicKey: text('wallet_public_key'),
+    /** Organization the challenge authorizes a change to; null for enrol and login. */
+    organizationId: text('organization_id'),
     expiresAt: integer('expires_at').notNull(),
     consumedAt: integer('consumed_at'),
     createdAt: integer('created_at').notNull(),
@@ -140,7 +308,16 @@ export const services = sqliteTable(
   'services',
   {
     id: text('id').primaryKey(),
-    /** URL segment: /v1/:slug */
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    /**
+     * URL segment: /v1/:slug
+     *
+     * Globally unique, deliberately. The public gateway path carries no organization
+     * context, so the slug is what resolves a request to an owner; the organization is then
+     * read off this row. Two organizations therefore cannot claim the same slug.
+     */
     slug: text('slug').notNull(),
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
@@ -168,6 +345,7 @@ export const services = sqliteTable(
   (t) => [
     uniqueIndex('services_slug_idx').on(t.slug),
     index('services_status_idx').on(t.status),
+    index('services_organization_idx').on(t.organizationId),
   ],
 )
 
@@ -175,6 +353,9 @@ export const policies = sqliteTable(
   'policies',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     description: text('description').notNull().default(''),
     /** Decision for a wallet on neither list. */
@@ -196,12 +377,16 @@ export const policies = sqliteTable(
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
+  (t) => [index('policies_organization_idx').on(t.organizationId)],
 )
 
 export const policyAllowlist = sqliteTable(
   'policy_allowlist',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     policyId: text('policy_id')
       .notNull()
       .references(() => policies.id, { onDelete: 'cascade' }),
@@ -216,6 +401,9 @@ export const policyDenylist = sqliteTable(
   'policy_denylist',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     policyId: text('policy_id')
       .notNull()
       .references(() => policies.id, { onDelete: 'cascade' }),
@@ -236,6 +424,9 @@ export const policyGrants = sqliteTable(
   'policy_grants',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     policyId: text('policy_id')
       .notNull()
       .references(() => policies.id, { onDelete: 'cascade' }),
@@ -256,6 +447,9 @@ export const policyAssets = sqliteTable(
   'policy_assets',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     policyId: text('policy_id')
       .notNull()
       .references(() => policies.id, { onDelete: 'cascade' }),
@@ -268,6 +462,9 @@ export const policyNetworks = sqliteTable(
   'policy_networks',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     policyId: text('policy_id')
       .notNull()
       .references(() => policies.id, { onDelete: 'cascade' }),
@@ -280,6 +477,9 @@ export const policyServiceLinks = sqliteTable(
   'policy_service_links',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     policyId: text('policy_id')
       .notNull()
       .references(() => policies.id, { onDelete: 'cascade' }),
@@ -298,6 +498,9 @@ export const reviewDecisions = sqliteTable(
   'review_decisions',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     policyId: text('policy_id')
       .notNull()
       .references(() => policies.id, { onDelete: 'cascade' }),
@@ -323,6 +526,7 @@ export const reviewDecisions = sqliteTable(
   (t) => [
     index('review_decisions_status_idx').on(t.status),
     index('review_decisions_wallet_idx').on(t.policyId, t.wallet, t.serviceId),
+    index('review_decisions_organization_idx').on(t.organizationId, t.status),
   ],
 )
 
@@ -334,6 +538,9 @@ export const paymentSessions = sqliteTable(
   'payment_sessions',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     /** Human-facing sequence number, e.g. '1842'. */
     ref: text('ref').notNull(),
     serviceId: text('service_id')
@@ -373,6 +580,7 @@ export const paymentSessions = sqliteTable(
     uniqueIndex('payment_sessions_ref_idx').on(t.ref),
     index('payment_sessions_status_idx').on(t.status),
     index('payment_sessions_service_idx').on(t.serviceId),
+    index('payment_sessions_organization_idx').on(t.organizationId, t.createdAt),
   ],
 )
 
@@ -380,6 +588,9 @@ export const sessionEvents = sqliteTable(
   'session_events',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     sessionId: text('session_id')
       .notNull()
       .references(() => paymentSessions.id, { onDelete: 'cascade' }),
@@ -424,6 +635,9 @@ export const requests = sqliteTable(
   'requests',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     serviceId: text('service_id')
       .notNull()
       .references(() => services.id, { onDelete: 'cascade' }),
@@ -466,6 +680,7 @@ export const requests = sqliteTable(
     index('requests_status_idx').on(t.status, t.createdAt),
     index('requests_session_idx').on(t.sessionId),
     index('requests_payment_tx_idx').on(t.paymentTxHash),
+    index('requests_organization_idx').on(t.organizationId, t.createdAt),
   ],
 )
 
@@ -477,6 +692,9 @@ export const settlements = sqliteTable(
   'settlements',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     kind: text('kind', { enum: ['charge', 'session'] }).notNull(),
     requestId: text('request_id').references(() => requests.id, { onDelete: 'set null' }),
     sessionId: text('session_id').references(() => paymentSessions.id, { onDelete: 'set null' }),
@@ -502,6 +720,7 @@ export const settlements = sqliteTable(
   (t) => [
     uniqueIndex('settlements_tx_idx').on(t.txHash),
     index('settlements_status_idx').on(t.status, t.createdAt),
+    index('settlements_organization_idx').on(t.organizationId, t.createdAt),
   ],
 )
 
@@ -514,6 +733,9 @@ export const incidents = sqliteTable(
   'incidents',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     kind: text('kind', {
       enum: ['charged_not_delivered', 'settlement_failed', 'upstream_failed', 'channel_dispute'],
     }).notNull(),
@@ -530,7 +752,10 @@ export const incidents = sqliteTable(
     acknowledgedAt: integer('acknowledged_at'),
     createdAt: integer('created_at').notNull(),
   },
-  (t) => [index('incidents_open_idx').on(t.acknowledgedAt, t.createdAt)],
+  (t) => [
+    index('incidents_open_idx').on(t.acknowledgedAt, t.createdAt),
+    index('incidents_organization_idx').on(t.organizationId, t.createdAt),
+  ],
 )
 
 /** Append-only feed powering the Live Activity panel. */
@@ -538,6 +763,9 @@ export const activityEvents = sqliteTable(
   'activity_events',
   {
     id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     type: text('type', {
       enum: [
         'request_paid',
@@ -561,7 +789,10 @@ export const activityEvents = sqliteTable(
     decimals: integer('decimals'),
     createdAt: integer('created_at').notNull(),
   },
-  (t) => [index('activity_events_created_idx').on(t.createdAt)],
+  (t) => [
+    index('activity_events_created_idx').on(t.createdAt),
+    index('activity_events_organization_idx').on(t.organizationId, t.createdAt),
+  ],
 )
 
 /** Fixed-window counters used by the policy engine's rate limiter. */
@@ -570,6 +801,9 @@ export const rateLimitBuckets = sqliteTable(
   {
     /** policyId:wallet:windowStart — the compare-and-set key. */
     key: text('key').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
     policyId: text('policy_id').notNull(),
     wallet: text('wallet').notNull(),
     windowStart: integer('window_start').notNull(),

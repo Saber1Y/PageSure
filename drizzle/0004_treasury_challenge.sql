@@ -1,0 +1,1 @@
+ALTER TABLE `login_challenges` ADD `organization_id` text;
