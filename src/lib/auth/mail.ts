@@ -49,8 +49,17 @@ function apiKey(): string | null {
 import { safeReturnTo } from '@/lib/auth/return-to'
 
 export function publicOrigin(): string {
-  const raw = process.env.PAGESURE_PUBLIC_ORIGIN?.trim()
-  if (!raw) throw new MailDeliveryError('PAGESURE_PUBLIC_ORIGIN is not set')
+  // PAGESURE_PUBLIC_ORIGIN wins, APP_URL is the fallback. A sign-in link has to point at
+  // whichever origin the person is actually looking at, and a deployment that already declares
+  // its canonical URL should not have to declare it twice to be able to send anybody a link.
+  const raw = (
+    process.env.PAGESURE_PUBLIC_ORIGIN?.trim() || process.env.APP_URL?.trim() || ''
+  )
+  if (!raw) {
+    throw new MailDeliveryError(
+      'neither PAGESURE_PUBLIC_ORIGIN nor APP_URL is set, so there is no origin to build a sign-in link against',
+    )
+  }
   let url: URL
   try {
     url = new URL(raw)
