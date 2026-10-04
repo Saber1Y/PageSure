@@ -17,22 +17,23 @@ available.
 
 1. [Before you start](#before-you-start)
 2. [What this product actually does](#what-this-product-actually-does)
-3. [The two halves do not connect](#the-two-halves-do-not-connect)
+3. [What you can and cannot create](#what-you-can-and-cannot-create)
 4. [Mail: pick a mode before you start](#mail-pick-a-mode-before-you-start)
 5. [Links point at localhost](#links-point-at-localhost)
 6. [The throttle](#the-throttle)
 7. [Part 1 - Seed the catalogue](#part-1---seed-the-catalogue)
-8. [Part 2 - Call the gateway and watch the policy decide](#part-2---call-the-gateway-and-watch-the-policy-decide)
-9. [Part 3 - Hold, approve, grant, retry](#part-3---hold-approve-grant-retry)
-10. [Part 4 - Take the money](#part-4---take-the-money)
-11. [Part 5 - Channel mode](#part-5---channel-mode)
-12. [Part 6 - Read the console](#part-6---read-the-console)
-13. [Part 7 - The playground](#part-7---the-playground)
-14. [Part 8 - Console access](#part-8---console-access)
-15. [Part 9 - Wallet, settlement account, signer](#part-9---wallet-settlement-account-signer)
-16. [Part 10 - The automated suites](#part-10---the-automated-suites)
-17. [Troubleshooting](#troubleshooting)
-18. [What is not verified](#what-is-not-verified)
+8. [Part 1a - Create a service in your own organization](#part-1a---create-a-service-in-your-own-organization)
+9. [Part 2 - Call the gateway and watch the policy decide](#part-2---call-the-gateway-and-watch-the-policy-decide)
+10. [Part 3 - Hold, approve, grant, retry](#part-3---hold-approve-grant-retry)
+11. [Part 4 - Take the money](#part-4---take-the-money)
+12. [Part 5 - Channel mode](#part-5---channel-mode)
+13. [Part 6 - Read the console](#part-6---read-the-console)
+14. [Part 7 - The playground](#part-7---the-playground)
+15. [Part 8 - Console access](#part-8---console-access)
+16. [Part 9 - Wallet, settlement account, signer](#part-9---wallet-settlement-account-signer)
+17. [Part 10 - The automated suites](#part-10---the-automated-suites)
+18. [Troubleshooting](#troubleshooting)
+19. [What is not verified](#what-is-not-verified)
 
 ## Before you start
 
@@ -40,7 +41,7 @@ Requirements:
 
 - Node 20 or newer.
 - A Stellar **Testnet** account, only for Part 4 onwards.
-  Parts 1 to 3, Part 6 and Part 8 work without one.
+  Parts 1 to 3, Part 6, Part 8 and Part 1a work without one.
 
 ```bash
 npm install
@@ -97,37 +98,35 @@ Three payment shapes exist.
 **Session mode** funds a one-way channel once and settles once at the end.
 Both are covered; only charge mode has been observed here.
 
-## The two halves do not connect
+## What you can and cannot create
 
 Read this before Part 1, because it explains an empty console that otherwise looks broken.
 
-There are two ways to get an organization in this product, and they produce **different
-organizations that never meet**:
+You can now create a service and publish it, which is the point of the product. Read this section
+only to understand one asymmetry that still exists.
+
+**An organization created by signing up can own a service.** `/services/new` creates one, and a
+default policy is created alongside it if you have none. Part 1a walks it.
+
+**The seed still creates a separate organization.** `npm run db:seed` builds `PageSure Demo`, owned
+by `DEMO_OWNER_WALLET`, which is a different organization from any you sign up into. So there are
+two ways to have services, and they do not merge:
 
 |                     | How you get it                            | Owns services? |
 | ------------------- | ----------------------------------------- | -------------- |
-| **Console sign-up** | Signing up through `/login`, as in Part 8 | **No**         |
+| **Console sign-up** | `/login`, then `/services/new` (Part 1a)  | **Yes**        |
 | **Seed**            | `npm run db:seed`, as in Part 1           | **Yes**        |
 
-There is **no user interface for creating a service or a policy.**
-`insert(services)` and `insert(policies)` each appear exactly once in the codebase, both in
-`src/lib/db/seed.ts`.
-So the seeded `PageSure Demo` organization is the only one that can own a service.
+The seed is useful for a catalogue you did not have to type, and for the channel-mode service that
+the form does not yet offer. It is not how you get a service into your own organization.
 
-The `Create service` link on `/services` is therefore a dead end: it points at `/services/new`, which
-does not exist, and renders the console 404.
+There is still **no user interface for creating or editing a policy.** A policy arrives as a side
+effect of creating your first service, and after that you can read it but not change it - no
+allowlist editing, no cap changes. So you cannot yet allowlist a wallet by hand; you reach `ALLOW`
+by approving a held request, which issues a scoped, expiring grant.
 
-The practical effect: if you follow Part 8 first and create `Acme Research`, then open `/services`,
-you will see `No services yet` - correctly, because that organization owns nothing. The services
-belong to `org_demo`.
-
-**To use the product, sign in as the seeded owner wallet.**
-The seed stores no email for that user, so this means wallet sign-in, which needs Freighter
-(Part 9).
-
-Everything in Parts 1 to 5 below works from `curl` with no browser session at all, which is why
-they come first.
-Parts 6 and 8 need a console session, and reading the seeded services in the console needs the
+Everything in Parts 2 to 5 works from `curl` with no browser session at all, which is why those
+come before the console walkthroughs.
 seeded owner.
 
 ## Mail: pick a mode before you start
@@ -301,6 +300,89 @@ what Part 2 uses.
 The seed is idempotent by policy name and service slug, so re-running it changes nothing.
 One caveat: `services.slug` is globally unique, so seeding a _second_ organization creates a new
 organization with policies and **zero** services.
+
+## Part 1a - Create a service in your own organization
+
+Part 1 seeds a catalogue into a throwaway organization.
+This is the one that matters if you want your own organization to sell something.
+
+1. Sign in and open <http://localhost:3000/services/new>.
+2. Expect a **Create service** form: Name, Address, Description, Price per call, What it calls,
+   Payment mode, Publish as, and Policy.
+3. Fill it in:
+
+   | Field | Value | Why |
+   | --- | --- | --- |
+   | Name | `Market Data` | shown to operators |
+   | Address | `my-market-data` | becomes `/v1/my-market-data`; prefilled from the name, editable |
+   | Price per call | `0.002` | plain decimal; `0.002` is `20000` base units |
+   | What it calls | `Market data` | the only adapter that needs no API key |
+   | Payment mode | `Charge` | one transaction per call |
+   | Publish as | `Live` | anything else answers 403 |
+   | Policy | `Create a default policy for me` | see below |
+
+4. Click **Create service**.
+
+Expect to land on the service's own page, showing `Live`, `0.002 USDC`, a bound policy and a
+copy-paste curl snippet.
+
+Confirm it is really registered:
+
+```bash
+sqlite3 data/pagesure.db "select slug, status, price_base, upstream_kind from services;"
+```
+
+Expect `my-market-data | live | 20000 | market`.
+
+And that the gateway now serves it:
+
+```bash
+curl -i "http://localhost:3000/v1/my-market-data?ids=stellar" \
+  -H "X-Pagesure-Payer: <an address on no allowlist>"
+```
+
+Expect **202** and `"decision": "review"` - held because the payer is unknown, **not** because the
+service is misconfigured.
+The difference matters: `review` means the setup is sound, while `block` with `no policy attached
+to this service` or `asset not allowed` means the service was published dead and would have taken
+money for a 403.
+
+### The policy you did not ask for
+
+With no policy selected, one is created for you, named `Standard Access`, with the asset and
+network rows the engine requires.
+That is deliberate: a service with no policy is blocked outright at check 2, so a fresh
+organization would otherwise arrive at a form whose only submit path was "no policy to bind".
+
+It is created once and reused by every later service.
+
+### What the form refuses, and why
+
+| Attempt | Expect | Reason |
+| --- | --- | --- |
+| Address `session` | refused | reserved - `/v1/:slug/session` is a real route |
+| Address `Web Search` | refused | uppercase; a URL is not case-insensitive |
+| Address `web/search` | refused | would be two path segments |
+| An address another organization already uses | refused | slugs are **global**, because `/v1/:slug` carries no organization context |
+| Price `0` | refused | a free endpoint is an open relay on somebody's API quota |
+| Price `$0.01` or `1e-2` | refused | amounts are plain decimals; never floating point |
+| Price `0.01234567` | refused | 8 decimal places on a 7-decimal asset |
+| `What it calls` = anything invented | refused | an unknown adapter throws *after* payment settles |
+
+Analysts see a read-only explanation instead of the form, matching the settings panels.
+An analyst can read everything and change nothing.
+
+### Not in this form yet
+
+**Channel mode needs more than a dropdown.** Selecting `Session` here records the mode, but
+`Market Data` under a session needs a deployed channel factory, a commitment key on the
+organization, and a funded channel. All three are outside this screen, so a session-mode service
+created here will not settle.
+See [Part 5](#part-5---channel-mode).
+
+**Policies cannot be edited.** Once `Standard Access` exists you can read it on `/policies` but
+not change a cap or allowlist a wallet. Reaching `ALLOW` therefore means approving a held request,
+which grants access scoped to one service for 24 hours.
 
 ## Part 2 - Call the gateway and watch the policy decide
 
@@ -566,7 +648,7 @@ as unproven rather than working.
 
 What each screen is for, what populates it, and what an empty one means.
 All of these render for any organization, but the services belong to the seeded one - see
-[The two halves do not connect](#the-two-halves-do-not-connect).
+[The two halves do not connect](#what-you-can-and-cannot-create).
 
 | Screen           | Shows                                                    | Populated by                               |
 | ---------------- | -------------------------------------------------------- | ------------------------------------------ |
@@ -923,17 +1005,18 @@ The proof suites are self-contained.
 Each creates its own scratch database, migrates it, exercises the subject, and closes it.
 They need no configuration, no wallet, and no network.
 
-| Command                    | Checks  | Covers                                             |
-| -------------------------- | ------- | -------------------------------------------------- |
-| `npm run prove:isolation`  | 59      | no cross-tenant reads or writes                    |
-| `npm run prove:email`      | 58      | sign-in tokens, invitations, mail delivery failure |
-| `npm run prove:settlement` | 49      | settlement refusals and 501 paths                  |
-| `npm run prove:treasury`   | 31      | settlement account and signer authorization        |
-| `npm run prove:auth`       | 20      | wallet challenge and signature verification        |
-| `npm run prove:signer`     | 20      | signer policy and transport                        |
-| `npm run prove:commitment` | 20      | commitment construction                            |
-| `npm run prove:upgrade`    | 13      | migrating a populated older database               |
-| **Total**                  | **270** |                                                    |
+| Command                    | Checks | Covers                                             |
+| -------------------------- | ------ | -------------------------------------------------- |
+| `npm run prove:services`   | 68     | service creation, slugs, prices, policy binding    |
+| `npm run prove:isolation`  | 59     | no cross-tenant reads or writes                    |
+| `npm run prove:email`      | 58     | sign-in tokens, invitations, mail delivery failure |
+| `npm run prove:settlement` | 49     | settlement refusals and 501 paths                  |
+| `npm run prove:treasury`   | 31     | settlement account and signer authorization        |
+| `npm run prove:auth`       | 23     | SEP-53 conformance, challenges, signature refusal  |
+| `npm run prove:signer`     | 20     | signer policy and transport                        |
+| `npm run prove:commitment` | 20     | commitment construction                            |
+| `npm run prove:upgrade`    | 13     | migrating a populated older database               |
+| **Total**                  | **341**|                                                    |
 
 Expect `N passed, 0 failed` from each, where `N` matches the table.
 If a count differs, the suite changed: read the diff rather than adjusting the expectation to
@@ -961,15 +1044,15 @@ Parts 2, 6 and 8 are the substitute for the console and gateway paths.
 **`/services` says `No services yet` after signing up.**
 Expected, and the most confusing thing in this product.
 Console sign-up creates an organization that owns nothing; only the seed creates services.
-See [The two halves do not connect](#the-two-halves-do-not-connect).
+See [The two halves do not connect](#what-you-can-and-cannot-create).
 
 **`npm run db:seed` logs `nothing to seed`.**
 `DEMO_OWNER_WALLET` is unset or is not a valid `G…` address.
 The seed is a silent no-op without it.
 
 **The `Create service` link 404s.**
-There is no `/services/new` route, and no other way to create a service.
-This is a gap in the product, not a mistake in your setup.
+It should not - `/services/new` exists. If you are seeing this, the server is running a build
+from before it, so restart `npm run dev`.
 
 **`/v1/summarize` returns 403 with `policy is blocked` in the reason.**
 Expected for any wallet not on an allowlist.
@@ -1053,17 +1136,23 @@ Stated plainly, because a test guide that overstates itself is worse than none.
   rather than by a self-referential helper. Whether Freighter's extension UI completes the flow is
   still unobserved.
 
-- **There is no way to create a service or a policy through the interface.**
-  Both come only from `npm run db:seed`, `Create service` 404s, `/policies` has no edit control,
-  and no allowlist or denylist can be changed from the UI.
-  Everything about configuring this product is currently a seed-and-database activity.
+- **A service can be created, but a policy still cannot be edited.**
+  `/services/new` publishes a service and will create one default policy if the organization has
+  none. There is no way to change a cap, toggle a policy, or allowlist or denylist a wallet from
+  the interface. Reaching `ALLOW` depends on approving a held request.
 
-- **An organization created by signing up can never own a service.**
-  The seeded organization is separate and keyed on a wallet, and nothing links them.
-  This is the gap that makes the console look empty after sign-up.
+- **The creation form does not create a working channel-mode service.**
+  `Payment mode: Session` records the mode, but session settlement also needs a deployed channel
+  factory, a commitment key on the organization and a funded channel, none of which this screen
+  collects. Choose `Charge`.
+
+- **The seed still creates a separate organization.**
+  `npm run db:seed` builds `PageSure Demo`, owned by `DEMO_OWNER_WALLET`, which never merges with
+  an organization you sign up into. It remains the quickest way to get the channel-mode service
+  that the form cannot yet provision.
 
 - **The gateway, policy engine and console screens have no automated coverage.**
-  The 270 proof checks cover auth, isolation, settlement refusals, signer policy and migrations.
+  The 341 proof checks cover auth, isolation, settlement refusals, signer policy and migrations.
   Parts 1 to 7 were walked by hand.
 
 - **Charge mode can charge without delivering.**

@@ -14,6 +14,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "prove:isolation": "tsx scripts/prove-isolation.ts",
+    "prove:services": "tsx scripts/prove-services.ts",
     "prove:auth": "tsx scripts/prove-auth-ceremony.ts",
     "prove:email": "tsx scripts/prove-email-auth.ts",
     "prove:commitment": "tsx scripts/prove-commitment.ts",
