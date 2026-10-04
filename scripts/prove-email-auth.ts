@@ -32,6 +32,7 @@ const { users, organizations, organizationMembers, emailTokens } = await import(
 const email = await import('../src/lib/auth/email')
 const identity = await import('../src/lib/auth/identity')
 const settlement = await import('../src/lib/mpp/settlement')
+const mail = await import('../src/lib/auth/mail')
 
 runMigrations()
 
@@ -302,6 +303,42 @@ console.log('settlement fails closed without a wallet')
   const refusal = throws(() => settlement.requireSettlementRecipient(organizationId))
   check('requiring a recipient refuses', refusal.length > 0)
   check('the refusal names the missing setup step', /settlement (wallet|account)/i.test(refusal), refusal)
+}
+
+// A provider rejection body is the one place a third party's internals - including the account's
+// own address - arrive in this process. It must reach the operator's log and never the caller,
+// because the caller renders it straight into the page that asked for the mail. This was not
+// hypothetical: the sign-in form was displaying "You can only send testing emails to your own
+// email address (...)" to anybody who submitted an address.
+{
+  const leaky = new mail.MailDeliveryError(
+    'the mail provider rejected the message',
+    'HTTP 403: {"message":"only to your own email address (owner@example.test)"}',
+  )
+  check('a provider error carries detail for the log', (leaky.detail ?? '').includes('owner@example.test'))
+
+  let surfaced = ''
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async () =>
+    new Response('{"message":"only to your own email address (owner@example.test)"}', {
+      status: 403,
+    })) as typeof fetch
+  try {
+    process.env.RESEND_API_KEY = 're-proof-only-not-a-real-key'
+    const result = await mail.deliverSigninLink({
+      to: 'someone@nottheaccount.test',
+      token: 'proof-token',
+    })
+    surfaced = result.delivered ? '' : result.reason
+  } finally {
+    delete process.env.RESEND_API_KEY
+    globalThis.fetch = originalFetch
+  }
+
+  check('a rejected send is reported as undelivered', surfaced.length > 0, surfaced)
+  check('the browser is not told the provider body', !surfaced.includes('only to your own email'), surfaced)
+  check('the browser is not shown a status code', !/\b403\b/.test(surfaced), surfaced)
+  check('the browser is shown something actionable', surfaced.length > 0 && surfaced.length < 80, surfaced)
 }
 
 closeScratchDatabase(SCRATCH)
