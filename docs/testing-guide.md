@@ -104,10 +104,10 @@ Read this before Part 1, because it explains an empty console that otherwise loo
 There are two ways to get an organization in this product, and they produce **different
 organizations that never meet**:
 
-| | How you get it | Owns services? |
-| --- | --- | --- |
-| **Console sign-up** | Signing up through `/login`, as in Part 8 | **No** |
-| **Seed** | `npm run db:seed`, as in Part 1 | **Yes** |
+|                     | How you get it                            | Owns services? |
+| ------------------- | ----------------------------------------- | -------------- |
+| **Console sign-up** | Signing up through `/login`, as in Part 8 | **No**         |
+| **Seed**            | `npm run db:seed`, as in Part 1           | **Yes**        |
 
 There is **no user interface for creating a service or a policy.**
 `insert(services)` and `insert(policies)` each appear exactly once in the codebase, both in
@@ -137,12 +137,12 @@ the link.
 There are two modes, and choosing wrong is the single most common reason this guide appears to
 describe a broken application.
 
-| | **Mode A - console** | **Mode B - real delivery** |
-| --- | --- | --- |
-| Set up | No `RESEND_API_KEY` | `RESEND_API_KEY` set |
-| Where the link appears | The server terminal | A real inbox |
-| Recipients | **Any address** | **One address only** (see below) |
-| Needed for | Multi-user and invitation testing | Confirming mail really leaves the app |
+|                        | **Mode A - console**              | **Mode B - real delivery**            |
+| ---------------------- | --------------------------------- | ------------------------------------- |
+| Set up                 | No `RESEND_API_KEY`               | `RESEND_API_KEY` set                  |
+| Where the link appears | The server terminal               | A real inbox                          |
+| Recipients             | **Any address**                   | **One address only** (see below)      |
+| Needed for             | Multi-user and invitation testing | Confirming mail really leaves the app |
 
 **Mode A is the default for testing**, and it is what Part 8 assumes.
 With no key configured, and outside production, the link is printed instead of sent:
@@ -242,11 +242,11 @@ DEMO_OWNER_WALLET=<a G... address you control>
 
 Optionally:
 
-| Variable | Effect if unset |
-| --- | --- |
-| `DEMO_SETTLEMENT_RECIPIENT` | falls back to `DEMO_OWNER_WALLET` |
-| `DEMO_COMMITMENT_PUBLIC_KEY` | the channel-mode service is skipped |
-| `PROVIDER_LABEL` | display name defaults to `PageSure Demo` |
+| Variable                     | Effect if unset                          |
+| ---------------------------- | ---------------------------------------- |
+| `DEMO_SETTLEMENT_RECIPIENT`  | falls back to `DEMO_OWNER_WALLET`        |
+| `DEMO_COMMITMENT_PUBLIC_KEY` | the channel-mode service is skipped      |
+| `PROVIDER_LABEL`             | display name defaults to `PageSure Demo` |
 
 Then:
 
@@ -278,28 +278,28 @@ sqlite3 data/pagesure.db "select name, unknown_action from policies;"
 
 Three services, all `live`:
 
-| Name | Slug | Price | Mode | Policy |
-| --- | --- | --- | --- | --- |
-| `PageSure Search` | `search` | 0.01 USDC | Charge | `Standard Access` |
-| `Market Data` | `market-data` | 0.002 USDC | **Session** | `Standard Access` |
-| `AI Summarizer` | `summarize` | 0.05 USDC | Charge | `Restricted` |
+| Name              | Slug          | Price      | Mode        | Policy            |
+| ----------------- | ------------- | ---------- | ----------- | ----------------- |
+| `PageSure Search` | `search`      | 0.01 USDC  | Charge      | `Standard Access` |
+| `Market Data`     | `market-data` | 0.002 USDC | **Session** | `Standard Access` |
+| `AI Summarizer`   | `summarize`   | 0.05 USDC  | Charge      | `Restricted`      |
 
 And two policies, which differ only in how they treat a wallet they have never seen:
 
-| | `Standard Access` | `Restricted` |
-| --- | --- | --- |
-| Unknown wallet | **review** | **block** |
-| Per-request cap | 0.5 USDC | 0.1 USDC |
-| Daily wallet cap | 100 USDC | 10 USDC |
-| Ungranted spend cap | 0.1 USDC | 0.01 USDC |
-| Rate limit | 60/min | 20/min |
+|                     | `Standard Access` | `Restricted` |
+| ------------------- | ----------------- | ------------ |
+| Unknown wallet      | **review**        | **block**    |
+| Per-request cap     | 0.5 USDC          | 0.1 USDC     |
+| Daily wallet cap    | 100 USDC          | 10 USDC      |
+| Ungranted spend cap | 0.1 USDC          | 0.01 USDC    |
+| Rate limit          | 60/min            | 20/min       |
 
 Both policies are bound to **all three** services.
 That is deliberate: it makes both policy outcomes reachable without editing anything, which is
 what Part 2 uses.
 
 The seed is idempotent by policy name and service slug, so re-running it changes nothing.
-One caveat: `services.slug` is globally unique, so seeding a *second* organization creates a new
+One caveat: `services.slug` is globally unique, so seeding a _second_ organization creates a new
 organization with policies and **zero** services.
 
 ## Part 2 - Call the gateway and watch the policy decide
@@ -331,18 +331,26 @@ It is the actual evaluation, not a summary, and every check before the terminal 
   "phase": "preflight",
   "decision": "review",
   "checks": [
-    { "key": "service_active",   "status": "pass", "detail": "live" },
-    { "key": "policy_bound",     "status": "pass", "detail": "Standard Access" },
-    { "key": "network_allowed",  "status": "pass", "detail": "stellar:testnet" },
-    { "key": "asset_allowed",    "status": "pass", "detail": "CBIELTK6…QXDAMA" },
-    { "key": "denylist",         "status": "pass", "detail": "not listed" },
-    { "key": "grant",            "status": "skip", "detail": "no active grant" },
-    { "key": "allowlist",        "status": "skip", "detail": "not on allowlist" },
-    { "key": "unknown_wallet",   "status": "fail", "detail": "wallet is not known…held for review" },
-    { "key": "amount_cap",       "status": "pass", "detail": "within 5000000" },
-    { "key": "ungranted_cap",    "status": "pass", "detail": "within ungranted cap" },
-    { "key": "daily_cap",        "status": "pass", "detail": "within 24h cap" },
-    { "key": "rate_limit",       "status": "pass", "detail": "within 60/min" }
+    { "key": "service_active", "status": "pass", "detail": "live" },
+    { "key": "policy_bound", "status": "pass", "detail": "Standard Access" },
+    { "key": "network_allowed", "status": "pass", "detail": "stellar:testnet" },
+    { "key": "asset_allowed", "status": "pass", "detail": "CBIELTK6…QXDAMA" },
+    { "key": "denylist", "status": "pass", "detail": "not listed" },
+    { "key": "grant", "status": "skip", "detail": "no active grant" },
+    { "key": "allowlist", "status": "skip", "detail": "not on allowlist" },
+    {
+      "key": "unknown_wallet",
+      "status": "fail",
+      "detail": "wallet is not known…held for review"
+    },
+    { "key": "amount_cap", "status": "pass", "detail": "within 5000000" },
+    {
+      "key": "ungranted_cap",
+      "status": "pass",
+      "detail": "within ungranted cap"
+    },
+    { "key": "daily_cap", "status": "pass", "detail": "within 24h cap" },
+    { "key": "rate_limit", "status": "pass", "detail": "within 60/min" }
   ]
 }
 ```
@@ -445,12 +453,12 @@ www-authenticate: Payment id="GGBZZs…", realm="localhost", method="stellar",
 
 Decoded, that challenge names:
 
-| Field | Value |
-| --- | --- |
-| `amount` | `100000` base units = 0.01 USDC |
-| `currency` | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` (USDC SAC, testnet) |
-| `externalId` | the `reviewId` you passed |
-| `recipient` | the organization's settlement account |
+| Field        | Value                                                                          |
+| ------------ | ------------------------------------------------------------------------------ |
+| `amount`     | `100000` base units = 0.01 USDC                                                |
+| `currency`   | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` (USDC SAC, testnet) |
+| `externalId` | the `reviewId` you passed                                                      |
+| `recipient`  | the organization's settlement account                                          |
 
 **The status code changed from 202 to 402 because the grant changed the policy outcome, not
 because anything was paid.**
@@ -538,7 +546,7 @@ npm run channels:deploy      # upload WASM, deploy the channel factory
 Then, per `README.md`:
 
 1. `POST /v1/market-data/session` with `{ "funder": "G…", "fundedBase": "…",
-   "commitmentPublicKey": "G…" }`.
+"commitmentPublicKey": "G…" }`.
 2. The **payer** signs the factory `open` invoke itself, so funds never sit in an account PageSure
    controls.
 3. `POST /v1/market-data/session/confirm` with the session id and deployed channel address.
@@ -560,16 +568,16 @@ What each screen is for, what populates it, and what an empty one means.
 All of these render for any organization, but the services belong to the seeded one - see
 [The two halves do not connect](#the-two-halves-do-not-connect).
 
-| Screen | Shows | Populated by |
-| --- | --- | --- |
-| `/overview` | request and volume totals, decision split, activity feed | real gateway traffic |
-| `/services` | the catalogue, price, mode, usage | the seed |
-| `/policies` | caps, allow/deny lists, grants, bound services | the seed |
-| `/review` | held requests awaiting a human | an unknown wallet under a reviewing policy |
-| `/settlements` | on-chain transactions, with explorer links | a settled payment or session |
-| `/sessions` | funded channels, accumulated against funded | a payer opening a channel |
-| `/incidents` | money taken without delivery, upstream failures | a post-settlement policy block |
-| `/requests/[id]` | the stored policy trace, verbatim | any gateway request |
+| Screen           | Shows                                                    | Populated by                               |
+| ---------------- | -------------------------------------------------------- | ------------------------------------------ |
+| `/overview`      | request and volume totals, decision split, activity feed | real gateway traffic                       |
+| `/services`      | the catalogue, price, mode, usage                        | the seed                                   |
+| `/policies`      | caps, allow/deny lists, grants, bound services           | the seed                                   |
+| `/review`        | held requests awaiting a human                           | an unknown wallet under a reviewing policy |
+| `/settlements`   | on-chain transactions, with explorer links               | a settled payment or session               |
+| `/sessions`      | funded channels, accumulated against funded              | a payer opening a channel                  |
+| `/incidents`     | money taken without delivery, upstream failures          | a post-settlement policy block             |
+| `/requests/[id]` | the stored policy trace, verbatim                        | any gateway request                        |
 
 Three of these are **read-only**, with no create or edit control anywhere:
 `/services`, `/policies` and `/requests/[id]`.
@@ -689,21 +697,21 @@ A session that survives a reload is a session, not a flash of state.
 1. Sign out from the account chip.
 2. Request a link for the same email again.
 3. Expect to land straight on `/overview`, not on onboarding.
-4. Open the *same* link a second time.
+4. Open the _same_ link a second time.
 
 Expect a refusal, not a second sign-in.
 Tokens are single-use: sign-in links expire after 15 minutes, invitations after 7 days.
 
 ### Guards and redirects
 
-| Try | Expect |
-| --- | --- |
-| any console page while signed out | redirected to `/login` |
+| Try                                                         | Expect                                              |
+| ----------------------------------------------------------- | --------------------------------------------------- |
+| any console page while signed out                           | redirected to `/login`                              |
 | `/login?returnTo=https://evil.example.com` while signed out | stays on `/login`; no request to `evil.example.com` |
-| signed in, `/login?returnTo=/settings` | lands on `/settings` |
-| signed in, `/login?returnTo=https://evil.example.com` | lands on `/overview`, same origin |
-| signed in, `/login?returnTo=//evil.example.com` | lands on `/overview`, same origin |
-| signed in with no organization, `/login` | goes to `/onboarding`, never a redirect loop |
+| signed in, `/login?returnTo=/settings`                      | lands on `/settings`                                |
+| signed in, `/login?returnTo=https://evil.example.com`       | lands on `/overview`, same origin                   |
+| signed in, `/login?returnTo=//evil.example.com`             | lands on `/overview`, same origin                   |
+| signed in with no organization, `/login`                    | goes to `/onboarding`, never a redirect loop        |
 
 That last row is worth doing by hand.
 A signed-in user with no organization is a legitimate state, and it used to bounce between `/login`
@@ -744,7 +752,7 @@ invitation is not transferable by guessing an address.
 8. Click **Sign in**, enter the invited address, submit, and open the sign-in link.
 9. Expect to be returned to the invitation, now reading:
 
-    > You are in. You joined Acme Research as a member.
+   > You are in. You joined Acme Research as a member.
 
 10. Click **Go to the dashboard**. Expect `/overview` with the organization in the header.
 
@@ -859,11 +867,11 @@ replayable.
 
 The status distinguishes three states, and the middle one is the one to distrust:
 
-| Status | Meaning |
-| --- | --- |
-| `Not connected` | no address; nothing can receive money |
-| `Awaiting proof` | an address is stated but never proven by a signature |
-| `Connected` | proved by a signature for this organization and this wallet |
+| Status           | Meaning                                                     |
+| ---------------- | ----------------------------------------------------------- |
+| `Not connected`  | no address; nothing can receive money                       |
+| `Awaiting proof` | an address is stated but never proven by a signature        |
+| `Connected`      | proved by a signature for this organization and this wallet |
 
 A settlement address nobody ever signed for must not be able to receive funds.
 
@@ -896,12 +904,12 @@ Hidden controls are not authorization.
 
 5. Try each of these as the owner, expecting a named rejection each time:
 
-| Attempt | Expect |
-| --- | --- |
-| A `http://` signer URL outside localhost | rejected: must use https |
-| A URL with credentials in it, `https://user:pw@host` | rejected |
-| A host not in the deployment's allowlist | rejected, naming the host |
-| A token variable that is not set in the process | rejected, naming the variable |
+| Attempt                                              | Expect                        |
+| ---------------------------------------------------- | ----------------------------- |
+| A `http://` signer URL outside localhost             | rejected: must use https      |
+| A URL with credentials in it, `https://user:pw@host` | rejected                      |
+| A host not in the deployment's allowlist             | rejected, naming the host     |
+| A token variable that is not set in the process      | rejected, naming the variable |
 
 ## Part 10 - The automated suites
 
@@ -915,17 +923,17 @@ The proof suites are self-contained.
 Each creates its own scratch database, migrates it, exercises the subject, and closes it.
 They need no configuration, no wallet, and no network.
 
-| Command | Checks | Covers |
-| --- | --- | --- |
-| `npm run prove:isolation` | 59 | no cross-tenant reads or writes |
-| `npm run prove:email` | 58 | sign-in tokens, invitations, mail delivery failure |
-| `npm run prove:settlement` | 49 | settlement refusals and 501 paths |
-| `npm run prove:treasury` | 31 | settlement account and signer authorization |
-| `npm run prove:auth` | 20 | wallet challenge and signature verification |
-| `npm run prove:signer` | 20 | signer policy and transport |
-| `npm run prove:commitment` | 20 | commitment construction |
-| `npm run prove:upgrade` | 13 | migrating a populated older database |
-| **Total** | **270** | |
+| Command                    | Checks  | Covers                                             |
+| -------------------------- | ------- | -------------------------------------------------- |
+| `npm run prove:isolation`  | 59      | no cross-tenant reads or writes                    |
+| `npm run prove:email`      | 58      | sign-in tokens, invitations, mail delivery failure |
+| `npm run prove:settlement` | 49      | settlement refusals and 501 paths                  |
+| `npm run prove:treasury`   | 31      | settlement account and signer authorization        |
+| `npm run prove:auth`       | 20      | wallet challenge and signature verification        |
+| `npm run prove:signer`     | 20      | signer policy and transport                        |
+| `npm run prove:commitment` | 20      | commitment construction                            |
+| `npm run prove:upgrade`    | 13      | migrating a populated older database               |
+| **Total**                  | **270** |                                                    |
 
 Expect `N passed, 0 failed` from each, where `N` matches the table.
 If a count differs, the suite changed: read the diff rather than adjusting the expectation to

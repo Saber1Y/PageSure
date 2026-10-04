@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { detectWallet, promptWalletAccess, signChallenge, walletDetectionMessage } from '@/lib/wallet/detect'
+import { detectWallet, promptWalletAccess, readSigningAddress, signChallenge, walletDetectionMessage } from '@/lib/wallet/detect'
 import {
   connectTreasuryAction,
   registerSignerAction,
@@ -52,7 +52,12 @@ export function TreasuryPanel({
         return
       }
 
-      const issued = await requestTreasuryChallengeAction(detection.publicKey ?? '')
+      // Read the account AFTER the access prompt. This challenge is bound to the address it is
+      // issued against, so a stale one is not a failed signature but a challenge nobody can
+      // satisfy. The access prompt is the most likely moment for the active account to change.
+      const claimed = (await readSigningAddress()) ?? detection.publicKey ?? ''
+
+      const issued = await requestTreasuryChallengeAction(claimed)
       if (!issued.ok || !issued.challenge || !issued.challengeId) {
         setError(
           issued.failure === 'forbidden'
@@ -75,15 +80,23 @@ export function TreasuryPanel({
       const result = await connectTreasuryAction({
         challengeId: issued.challengeId,
         signature: signed.signature,
-        wallet: detection.publicKey ?? '',
+        wallet: claimed,
       })
       if (!result.ok) {
+        if (result.failure === 'signature_failed') {
+          // Almost always an account switch rather than a broken wallet: name both addresses.
+          const active = await readSigningAddress()
+          setError(
+            active && active !== claimed
+              ? `Freighter signed with ${active} but the page was expecting ${claimed}. Lock the extension, select one account, unlock it, and try again. Nothing has been changed.`
+              : 'That signature did not verify. Nothing has been changed.',
+          )
+          return
+        }
         setError(
-          result.failure === 'signature_failed'
-            ? 'That signature did not verify. Nothing has been changed.'
-            : result.failure === 'forbidden'
-              ? 'Only an owner can change where this organization is paid.'
-              : 'The wallet could not be connected. Nothing has been changed.',
+          result.failure === 'forbidden'
+            ? 'Only an owner can change where this organization is paid.'
+            : 'The wallet could not be connected. Nothing has been changed.',
         )
         return
       }

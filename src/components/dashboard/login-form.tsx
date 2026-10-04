@@ -6,7 +6,7 @@ import { requestChallengeAction, verifyChallengeAction } from '@/app/login/actio
 import { requestSignin } from '@/app/login/email-actions'
 import { safeReturnTo } from '@/lib/auth/return-to'
 import type { WalletProbe } from '@/lib/wallet/detect'
-import { detectWallet, promptWalletAccess, signChallenge, walletDetectionMessage } from '@/lib/wallet/detect'
+import { detectWallet, promptWalletAccess, readSigningAddress, signChallenge, walletDetectionMessage } from '@/lib/wallet/detect'
 
 type Stage = 'idle' | 'requesting' | 'signing' | 'verifying' | 'error' | 'sent'
 
@@ -110,6 +110,11 @@ export function LoginPanel({
         return
       }
 
+      // Read the account AFTER the access prompt. That prompt is where the active account can
+      // change, and Freighter signs with whatever is active when signMessage is called, so an
+      // address read beforehand is a stale claim that cannot verify.
+      const claimed = (await readSigningAddress()) ?? detection.publicKey
+
       setStage('signing')
       const signed = await signChallenge(challenge.challenge)
       if (!signed.ok) {
@@ -131,10 +136,22 @@ export function LoginPanel({
         // Reported by the extension, and treated as an untrusted claim: the server checks the
         // signature against it and rejects a mismatch, so naming the wrong account here can
         // only fail the attempt, never redirect it somewhere else.
-        wallet: detection.publicKey ?? '',
+        wallet: claimed ?? '',
       })
       if (!result.ok) {
         setStage('error')
+        // A signature that does not verify is almost always an account switch rather than a
+        // broken wallet. Name the two accounts instead of leaving the operator to guess which
+        // one the extension actually used.
+        if (result.reason === 'wrong_signer') {
+          const active = await readSigningAddress()
+          if (active && claimed && active !== claimed) {
+            setError(
+              `Freighter signed with ${active} but the page was expecting ${claimed}. Lock the extension, select one account, unlock it, and try again.`,
+            )
+            return
+          }
+        }
         setError(result.error ?? 'The signature could not be verified.')
         return
       }

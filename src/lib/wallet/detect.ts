@@ -136,6 +136,32 @@ export async function promptWalletAccess(): Promise<{ ok: true } | { ok: false; 
 export type SignResult = { ok: true; signature: string } | { ok: false; error: string }
 
 /**
+ * The account that is active RIGHT NOW.
+ *
+ * This must be read after `promptWalletAccess()`, never before.
+ *
+ * `requestAccess()` is a wallet prompt, and it is the single most likely moment for the active
+ * account to change: on first use the extension asks which account to expose, and the answer
+ * frequently is not the one that was selected beforehand. An address captured before that prompt
+ * is a stale claim, and since Freighter signs with whichever account is active when `signMessage`
+ * is called, the server is then asked to verify a signature against a key that provably did not
+ * produce it. The failure surfaces as `wrong_signer`, which reads like a wallet fault and is not
+ * one.
+ *
+ * Returns null rather than throwing when the extension cannot answer, so callers can fall back to
+ * whatever they detected earlier and let the server produce the real verdict.
+ */
+export async function readSigningAddress(): Promise<string | null> {
+  try {
+    const res = await getAddress()
+    if (res?.error) return null
+    return res?.address ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Base64-encode a signature given as bytes.
  *
  * Browser-native on purpose: this module is bundled for the client, where `Buffer` does not
