@@ -2,6 +2,7 @@ import Link from 'next/link'
 import {NOT_SET,  Card, KeyValue } from '@/components/ui/primitives'
 import { PolicyTraceView } from '@/components/dashboard/policy-trace'
 import { requestDetail } from '@/lib/metering/aggregates'
+import { requireUserPage } from '@/lib/auth/session'
 import { formatAmount } from '@/lib/money'
 import { notFound } from 'next/navigation'
 
@@ -13,8 +14,11 @@ export const dynamic = 'force-dynamic'
  * outcomes differ and conflating them would be dishonest.
  */
 export default async function RequestPage({ params }: { params: Promise<{ id: string }> }) {
+  const user = await requireUserPage()
   const { id } = await params
-  const request = requestDetail(id)
+  // Scoped: a request id belonging to another organization resolves to null and 404s here,
+  // exactly like an id that does not exist.
+  const request = requestDetail(user.organizationId, id)
   if (!request) notFound()
 
   // Map the recorded status onto the honest payment/service pair.

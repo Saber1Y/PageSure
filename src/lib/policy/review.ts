@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto'
  */
 
 export function createReview(input: {
+  organizationId: string
   policyId: string
   serviceId: string
   wallet: string
@@ -30,6 +31,7 @@ export function createReview(input: {
     .insert(reviewDecisions)
     .values({
       id,
+      organizationId: input.organizationId,
       policyId: input.policyId,
       serviceId: input.serviceId,
       wallet: input.wallet,
@@ -46,13 +48,17 @@ export function createReview(input: {
   return id
 }
 
-/** Look up a review the client presented, scoped so one service cannot reuse another's. */
-export function findPresentedReview(reviewId: string, serviceId: string, wallet: string) {
+/**
+ * Look up a review the client presented, scoped so one service cannot reuse another's.
+ * The organizationId comes from the resolved service, never from client input.
+ */
+export function findPresentedReview(organizationId: string, reviewId: string, serviceId: string, wallet: string) {
   return db()
     .select()
     .from(reviewDecisions)
     .where(
       and(
+        eq(reviewDecisions.organizationId, organizationId),
         eq(reviewDecisions.id, reviewId),
         eq(reviewDecisions.serviceId, serviceId),
         eq(reviewDecisions.wallet, wallet),
@@ -64,8 +70,15 @@ export function findPresentedReview(reviewId: string, serviceId: string, wallet:
 /**
  * Resolve a review. Approving writes a policy_grants row scoped to this service and
  * bounded in time. Rejecting writes nothing, so the wallet is held again on retry.
+ *
+ * `organizationId` is the caller's organization from `requireUser()`, never a value from
+ * the request body. Without it, any signed-in operator could resolve any organization's
+ * review by id — an approval is an authorization grant, so that would be a tenant-escalation
+ * bug, not an information leak. A review belonging to another organization is reported as
+ * not found for the same reason.
  */
 export function resolveReview(input: {
+  organizationId: string
   reviewId: string
   resolvedBy: string
   /** Explicit. The note is audit text and is never interpreted. */
@@ -74,14 +87,18 @@ export function resolveReview(input: {
   grantTtlMs?: number
 }): { ok: true; grantId: string | null; status: 'approved' | 'rejected' } | { ok: false; reason: string } {
   const target = db()
-  const review = target.select().from(reviewDecisions).where(eq(reviewDecisions.id, input.reviewId)).get()
+  const review = target
+    .select()
+    .from(reviewDecisions)
+    .where(and(eq(reviewDecisions.organizationId, input.organizationId), eq(reviewDecisions.id, input.reviewId)))
+    .get()
   if (!review) return { ok: false, reason: 'review not found' }
   if (review.status !== 'pending') return { ok: false, reason: `review already ${review.status}` }
   if (review.expiresAt < Date.now()) {
     target
       .update(reviewDecisions)
       .set({ status: 'expired', resolvedAt: Date.now(), resolvedBy: input.resolvedBy, note: input.note })
-      .where(eq(reviewDecisions.id, input.reviewId))
+      .where(and(eq(reviewDecisions.organizationId, input.organizationId), eq(reviewDecisions.id, input.reviewId)))
       .run()
     return { ok: false, reason: 'review expired' }
   }
@@ -92,7 +109,7 @@ export function resolveReview(input: {
     target
       .update(reviewDecisions)
       .set({ status: 'rejected', resolvedAt: now, resolvedBy: input.resolvedBy, note: input.note })
-      .where(eq(reviewDecisions.id, input.reviewId))
+      .where(and(eq(reviewDecisions.organizationId, input.organizationId), eq(reviewDecisions.id, input.reviewId)))
       .run()
     return { ok: true, grantId: null, status: 'rejected' }
   }
@@ -103,6 +120,7 @@ export function resolveReview(input: {
     .insert(policyGrants)
     .values({
       id: grantId,
+      organizationId: review.organizationId,
       policyId: review.policyId,
       serviceId: review.serviceId,
       wallet: review.wallet,
@@ -116,37 +134,42 @@ export function resolveReview(input: {
   target
     .update(reviewDecisions)
     .set({ status: 'approved', resolvedAt: now, resolvedBy: input.resolvedBy, note: input.note })
-    .where(eq(reviewDecisions.id, input.reviewId))
+    .where(and(eq(reviewDecisions.organizationId, input.organizationId), eq(reviewDecisions.id, input.reviewId)))
     .run()
 
   return { ok: true, grantId, status: 'approved' }
 }
 
-export function countPendingReviews(): number {
+export function countPendingReviews(organizationId: string): number {
   const row = db()
     .select({ n: sql<number>`count(*)` })
     .from(reviewDecisions)
-    .where(and(eq(reviewDecisions.status, 'pending')))
+    .where(and(eq(reviewDecisions.organizationId, organizationId), eq(reviewDecisions.status, 'pending')))
     .get()
   return row?.n ?? 0
 }
 
-export function openReviews(limit = 50) {
+export function openReviews(organizationId: string, limit = 50) {
   return db()
     .select()
     .from(reviewDecisions)
-    .where(eq(reviewDecisions.status, 'pending'))
+    .where(and(eq(reviewDecisions.organizationId, organizationId), eq(reviewDecisions.status, 'pending')))
     .orderBy(sql`${reviewDecisions.createdAt} desc`)
     .limit(limit)
     .all()
 }
 
-/** Active sessions, newest first. */
-export function activeSessions(limit = 50) {
+/** Active sessions, newest first, for one organization only. */
+export function activeSessions(organizationId: string, limit = 50) {
   return db()
     .select()
     .from(paymentSessions)
-    .where(sql`${paymentSessions.status} in ('opening','active','settling')`)
+    .where(
+      and(
+        eq(paymentSessions.organizationId, organizationId),
+        sql`${paymentSessions.status} in ('opening','active','settling')`,
+      ),
+    )
     .orderBy(sql`${paymentSessions.createdAt} desc`)
     .limit(limit)
     .all()

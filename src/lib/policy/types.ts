@@ -81,6 +81,8 @@ export const CHECK_LABELS: Record<CheckKey, string> = {
 
 /** Inputs the engine needs. Assembled by lib/policy/service.ts from the DB. */
 export interface PolicyContext {
+  /** Owning organization of the service being called. Taken from the resolved service. */
+  organizationId: string
   serviceId: string
   serviceName: string
   serviceStatus: 'live' | 'paused' | 'draft'

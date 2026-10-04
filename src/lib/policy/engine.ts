@@ -106,25 +106,71 @@ class TraceBuilder {
   }
 }
 
-export function loadPolicySnapshot(policyId: string, serviceId: string): PolicySnapshot | null {
+/**
+ * Load a policy and its child rows for evaluation.
+ *
+ * `organizationId` is required and every child query filters on it. Two reasons, both real:
+ *
+ * 1. This previously read `where(eq(policyAssets.assetContract, policyAssets.assetContract))`,
+ *    which is a tautology — it compared the column to itself and so returned the asset list
+ *    of EVERY policy in the database. Under one tenant that meant a service could accept an
+ *    asset no policy of its own allowed; under many tenants it is a cross-tenant read on
+ *    the hot path of every request.
+ * 2. Filtering only on `policyId` would still be wrong, because ids are unique but the
+ *    caller's ownership of a policy is a separate fact from the policy existing.
+ */
+export function loadPolicySnapshot(
+  organizationId: string,
+  policyId: string,
+  serviceId: string,
+): PolicySnapshot | null {
   const target = db()
-  const policy = target.select().from(policies).where(eq(policies.id, policyId)).get()
+  const policy = target
+    .select()
+    .from(policies)
+    .where(and(eq(policies.organizationId, organizationId), eq(policies.id, policyId)))
+    .get()
   if (!policy) return null
 
   const allowedNetworks = new Set(
-    target.select({ n: policyNetworks.network }).from(policyNetworks).where(eq(policyNetworks.policyId, policyId)).all().map((r) => r.n),
+    target
+      .select({ n: policyNetworks.network })
+      .from(policyNetworks)
+      .where(and(eq(policyNetworks.organizationId, organizationId), eq(policyNetworks.policyId, policyId)))
+      .all()
+      .map((r) => r.n),
   )
   const allowedAssets = new Set(
-    target.select({ a: policyAssets.assetContract }).from(policyAssets).where(eq(policyAssets.assetContract, policyAssets.assetContract)).all().map((r) => r.a),
+    target
+      .select({ a: policyAssets.assetContract })
+      .from(policyAssets)
+      .where(and(eq(policyAssets.organizationId, organizationId), eq(policyAssets.policyId, policyId)))
+      .all()
+      .map((r) => r.a),
   )
   const allowlist = new Set(
-    target.select({ w: policyAllowlist.wallet }).from(policyAllowlist).where(eq(policyAllowlist.policyId, policyId)).all().map((r) => r.w),
+    target
+      .select({ w: policyAllowlist.wallet })
+      .from(policyAllowlist)
+      .where(and(eq(policyAllowlist.organizationId, organizationId), eq(policyAllowlist.policyId, policyId)))
+      .all()
+      .map((r) => r.w),
   )
   const denylist = new Map(
-    target.select({ w: policyDenylist.wallet, r: policyDenylist.reason }).from(policyDenylist).where(eq(policyDenylist.policyId, policyId)).all().map((r) => [r.w, r.r] as const),
+    target
+      .select({ w: policyDenylist.wallet, r: policyDenylist.reason })
+      .from(policyDenylist)
+      .where(and(eq(policyDenylist.organizationId, organizationId), eq(policyDenylist.policyId, policyId)))
+      .all()
+      .map((r) => [r.w, r.r] as const),
   )
   const linkedServiceIds = new Set(
-    target.select({ s: policyServiceLinks.serviceId }).from(policyServiceLinks).where(eq(policyServiceLinks.policyId, policyId)).all().map((r) => r.s),
+    target
+      .select({ s: policyServiceLinks.serviceId })
+      .from(policyServiceLinks)
+      .where(and(eq(policyServiceLinks.organizationId, organizationId), eq(policyServiceLinks.policyId, policyId)))
+      .all()
+      .map((r) => r.s),
   )
 
   // Grants are scoped to a service, or to the whole policy when serviceId is null.
@@ -135,6 +181,7 @@ export function loadPolicySnapshot(policyId: string, serviceId: string): PolicyS
     .from(policyGrants)
     .where(
       and(
+        eq(policyGrants.organizationId, organizationId),
         eq(policyGrants.policyId, policyId),
         isNull(policyGrants.revokedAt),
         sql`${policyGrants.expiresAt} > ${nowMs}`,
@@ -292,7 +339,7 @@ export function evaluate(
 
   // 12. rate_limit
   if (snapshot.rateLimitPerMin && options.countRateLimit) {
-    const ok = consumeRateLimit(snapshot.id, ctx.payer, snapshot.rateLimitPerMin)
+    const ok = consumeRateLimit(ctx.organizationId, snapshot.id, ctx.payer, snapshot.rateLimitPerMin)
     if (ok) t.pass('rate_limit', `within ${snapshot.rateLimitPerMin}/min`)
     else {
       t.block('rate_limit', `exceeded ${snapshot.rateLimitPerMin} requests per minute`)
@@ -312,16 +359,23 @@ export function evaluate(
  * Fixed-window counter with a conditional UPDATE, so concurrent requests cannot
  * both read the same count and both write count+1.
  */
-export function consumeRateLimit(policyId: string, wallet: string, limitPerMin: number): boolean {
+export function consumeRateLimit(
+  organizationId: string,
+  policyId: string,
+  wallet: string,
+  limitPerMin: number,
+): boolean {
   const target = db()
   const windowMs = 60_000
   const windowStart = Math.floor(Date.now() / windowMs) * windowMs
-  const key = `${policyId}:${wallet}:${windowStart}`
+  // Namespaced by organization: policy ids are unique but two organizations may each own a
+  // "Standard Access", and a shared counter would let one tenant's traffic rate-limit another.
+  const key = `${organizationId}:${policyId}:${wallet}:${windowStart}`
 
   // Try to claim a slot in the current window.
   const inserted = target
     .insert(rateLimitBuckets)
-    .values({ key, policyId, wallet, windowStart, count: 1, updatedAt: Date.now() })
+    .values({ key, organizationId, policyId, wallet, windowStart, count: 1, updatedAt: Date.now() })
     .onConflictDoNothing()
     .run()
 

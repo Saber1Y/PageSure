@@ -33,7 +33,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   const action = body.action === 'approve' ? 'approve' : 'reject'
   const note = (body.note ?? '').slice(0, 500)
 
+  // organizationId comes from the session, never from the body. resolveReview refuses any
+  // review outside it, so a valid session for one organization cannot approve another
+  // organization's held request by id.
   const result = resolveReview({
+    organizationId: user.organizationId,
     reviewId: id,
     resolvedBy: user.id,
     action,
@@ -46,6 +50,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   }
 
   recordActivity({
+    organizationId: user.organizationId,
     type: 'review_resolved',
     ok: result.status === 'approved',
     message:

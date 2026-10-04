@@ -1,5 +1,5 @@
-import { redirect } from 'next/navigation'
 import { currentUser } from '@/lib/auth/session'
+import { redirect } from 'next/navigation'
 import { Nav } from '@/components/dashboard/nav'
 import { AccountChip } from '@/components/dashboard/account-chip'
 import { Brand } from '@/components/ui/brand'
@@ -12,9 +12,14 @@ import { Brand } from '@/components/ui/brand'
  * because agents have no session and authenticate by paying.
  */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  // const user = await currentUser()
-  // if (!user) redirect('/login')
-  const user = { id: "demo", displayName: "Demo", email: "demo@example.com", walletPublicKey: "GDOLLUBVD2FS6VJNEDTNYTNVP3C5EDDTUSQSMQDXSRZN5DGSQ2VK6HXT" }
+  /*
+   * Redirect, never requireUser(). requireUser() throws by design so server actions and
+   * route handlers cannot accidentally continue unauthenticated, but a thrown error in a
+   * layout surfaces as a 500 on every dashboard page rather than a redirect to /login.
+   * The children are separately gated, so this redirect is the shell, not the guard.
+   */
+  const user = await currentUser()
+  if (!user) redirect('/login')
 
   return (
     <div className="min-h-[100dvh]">
@@ -33,7 +38,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               <Nav />
             </div>
             <div className="ml-auto shrink-0 lg:ml-0">
-              <AccountChip name={user.displayName} email={user.email} wallet={user.walletPublicKey} />
+              <AccountChip
+                name={user.displayName}
+                email={user.email}
+                wallet={user.walletPublicKey}
+                organization={user.organizationName}
+                role={user.role}
+              />
             </div>
           </div>
         </div>

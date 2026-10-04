@@ -3,6 +3,7 @@ import { Badge, Card, Dot, EmptyState, KeyValue, PageHeader } from '@/components
 import { resolveServiceById } from '@/lib/services/registry'
 import { formatAmount } from '@/lib/money'
 import { openReviews, countPendingReviews } from '@/lib/policy/review'
+import { requireUserPage } from '@/lib/auth/session'
 import { ReviewActions } from '@/components/dashboard/review-actions'
 import type { PolicyTrace } from '@/lib/policy/types'
 
@@ -13,9 +14,11 @@ export const dynamic = 'force-dynamic'
  * was taken, the upstream was never called. Approving writes a service-scoped, expiring
  * grant. It never edits the allowlist.
  */
-export default function ReviewPage() {
-  const pending = openReviews(100)
-  const pendingCount = countPendingReviews()
+export default async function ReviewPage() {
+  const user = await requireUserPage()
+  const org = user.organizationId
+  const pending = openReviews(org, 100)
+  const pendingCount = countPendingReviews(org)
 
   return (
     <div className="flex flex-col gap-8">

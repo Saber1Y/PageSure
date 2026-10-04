@@ -5,19 +5,27 @@ import { resolveServiceById } from '@/lib/services/registry'
 import { serviceRollups } from '@/lib/metering/aggregates'
 import { db } from '@/lib/db/client'
 import { policies } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
+import { requireUserPage } from '@/lib/auth/session'
 import { formatAmount } from '@/lib/money'
 
 export const dynamic = 'force-dynamic'
 
 export default async function ServiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const user = await requireUserPage()
   const { id } = await params
+  // resolveServiceById is global because the gateway needs it that way, so ownership is
+  // checked here against the caller's organization before anything is rendered.
   const service = resolveServiceById(id)
-  if (!service) notFound()
+  if (!service || service.organizationId !== user.organizationId) notFound()
 
-  const rollup = serviceRollups().find((s) => s.id === id)
+  const rollup = serviceRollups(user.organizationId).find((s) => s.id === id)
   const policy = service.policyId
-    ? db().select().from(policies).where(eq(policies.id, service.policyId)).get()
+    ? db()
+        .select()
+        .from(policies)
+        .where(and(eq(policies.id, service.policyId), eq(policies.organizationId, user.organizationId)))
+        .get()
     : null
 
   const origin = process.env.APP_URL ?? 'http://localhost:3000'

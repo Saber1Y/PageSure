@@ -1,5 +1,6 @@
 import { Badge, Card, Dot, KeyValue, PageHeader, short } from '@/components/ui/primitives'
 import { policiesWithUsage } from '@/lib/policy/read-model'
+import { requireUserPage } from '@/lib/auth/session'
 
 export const dynamic = 'force-dynamic'
 
@@ -7,8 +8,9 @@ export const dynamic = 'force-dynamic'
  * A provider-defined access policy engine. It is not, and is not presented as, a
  * complete regulatory compliance platform.
  */
-export default function PoliciesPage() {
-  const rows = policiesWithUsage()
+export default async function PoliciesPage() {
+  const user = await requireUserPage()
+  const rows = policiesWithUsage(user.organizationId)
 
   return (
     <div className="flex flex-col gap-8">

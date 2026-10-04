@@ -7,6 +7,7 @@ import { network, rpcUrl } from '@/lib/mpp/registry'
 import { toBig } from '@/lib/money'
 import { newId } from '@/lib/metering/record'
 import { nextSessionRef } from './lookup'
+import { requireCommitmentKeyBytes, settlementTargetForOrganization } from '@/lib/mpp/settlement'
 import { addSessionEvent } from './gateway'
 
 /**
@@ -27,12 +28,13 @@ import { addSessionEvent } from './gateway'
  */
 
 export interface OpenSessionParams {
+  /** Owning organization of the service, from the resolved service. */
+  organizationId: string
   serviceId: string
   funder: string
   assetContract: string
   decimals: number
   fundedBase: string
-  commitmentPublicKeyG: string
   refundWaitingPeriodSeconds: number
 }
 
@@ -48,6 +50,9 @@ export function channelOpenInstructions(params: OpenSessionParams) {
   const factory = process.env.CHANNEL_FACTORY_C
   if (!factory) throw new ChannelVerificationError('CHANNEL_FACTORY_C is not set. Run: npm run channels:deploy')
 
+  const settlement = settlementTargetForOrganization(params.organizationId)
+  if (!settlement) throw new ChannelVerificationError(`organization ${params.organizationId} does not exist`)
+
   return {
     intent: 'channel',
     factory,
@@ -55,9 +60,33 @@ export function channelOpenInstructions(params: OpenSessionParams) {
     salt: newSalt(),
     token: params.assetContract,
     from: params.funder,
-    commitmentKey: params.commitmentPublicKeyG,
-    to: process.env.PROVIDER_RECIPIENT_G,
-    amount: toBig(params.fundedBase),
+    /*
+     * The organization's own commitment key, never the payer's.
+     *
+     * This was previously read straight out of the request body, which inverts the contract's
+     * authorization model: `settle` and `close` check `ed25519_verify(commitment_key, ...)` to
+     * authorise the recipient to withdraw. Handing that key to the payer means the payer holds
+     * the private half of the key that authorises withdrawal from its own channel. It is not
+     * directly exploitable today only because `to.require_auth()` also runs, so this stayed
+     * invisible — while PageSure itself could never produce a valid commitment, making the
+     * settlement path non-functional. Both halves now come from the organization.
+     *
+     * Raw bytes, because the factory takes BytesN<32>. The G... StrKey is 56 characters and
+     * would decode to the wrong 32 bytes, failing only at settlement time with funds already
+     * escrowed.
+     */
+    commitmentKey: requireCommitmentKeyBytes(params.organizationId).toString('hex'),
+    to: settlement.recipient,
+    /*
+     * A string, not the BigInt `toBig` returns.
+     *
+     * These instructions are serialized straight into the JSON response, and JSON.stringify
+     * throws on BigInt. Passing the bigint reserved the session row first and then failed to
+     * answer, so the payer got a 500 with no instructions while a session sat in the
+     * database holding a slot they could never use. Base units are decimal digits, so the
+     * decimal string is exactly the i128 the contract expects.
+     */
+    amount: toBig(params.fundedBase).toString(),
     refundWaitingPeriod: params.refundWaitingPeriodSeconds,
     network: network(),
     note:
@@ -79,6 +108,7 @@ function newSalt(): string {
  * deployed something other than the channel it claimed, and the session is refused.
  */
 export async function confirmSession(input: {
+  organizationId: string
   sessionId: string
   channelContract: string
   expected: {
@@ -131,6 +161,7 @@ export async function confirmSession(input: {
     .run()
 
   addSessionEvent(
+    input.organizationId,
     input.sessionId,
     'channel_funded',
     `Channel funded with ${state.balance} base units, verified against chain`,
@@ -148,15 +179,19 @@ export function createSessionRow(params: OpenSessionParams): string {
     .insert(paymentSessions)
     .values({
       id,
+      organizationId: params.organizationId,
       ref: nextSessionRef(),
       serviceId: params.serviceId,
       // Filled in by confirmSession once the payer has deployed.
       channelContract: `pending:${id}`,
       funder: params.funder,
-      recipient: process.env.PROVIDER_RECIPIENT_G ?? '',
+      // Denormalised at open time on purpose: it is the account the channel was actually
+      // opened against, and a later edit to the organization's treasury must not rewrite
+      // history for channels that are already funded.
+      recipient: settlementTargetForOrganization(params.organizationId)?.recipient ?? '',
       assetContract: params.assetContract,
       decimals: params.decimals,
-      commitmentPublicKey: params.commitmentPublicKeyG,
+      commitmentPublicKey: requireCommitmentKeyBytes(params.organizationId).toString('hex'),
       cumulativeBase: '0',
       requestCount: 0,
       fundedBase: params.fundedBase,
@@ -166,8 +201,8 @@ export function createSessionRow(params: OpenSessionParams): string {
       updatedAt: now,
     })
     .run()
-  addSessionEvent(id, 'created', `Session opened by ${params.funder}`, params.fundedBase)
-  addSessionEvent(id, 'policy_approved', 'Preflight policy allowed this funder')
+  addSessionEvent(params.organizationId, id, 'created', `Session opened by ${params.funder}`, params.fundedBase)
+  addSessionEvent(params.organizationId, id, 'policy_approved', 'Preflight policy allowed this funder')
   return id
 }
 

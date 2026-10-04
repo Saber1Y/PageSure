@@ -2,12 +2,14 @@ import Link from 'next/link'
 import { NOT_SET, Badge, Card, Dot, EmptyState, PageHeader } from '@/components/ui/primitives'
 import { listAllSessions } from '@/lib/sessions/lookup'
 import { resolveServiceById } from '@/lib/services/registry'
+import { requireUserPage } from '@/lib/auth/session'
 import { formatAmount } from '@/lib/money'
 
 export const dynamic = 'force-dynamic'
 
-export default function SessionsPage() {
-  const sessions = listAllSessions(100)
+export default async function SessionsPage() {
+  const user = await requireUserPage()
+  const sessions = listAllSessions(user.organizationId, 100)
 
   return (
     <div className="flex flex-col gap-8">

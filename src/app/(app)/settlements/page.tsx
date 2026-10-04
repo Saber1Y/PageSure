@@ -1,5 +1,6 @@
 import { Badge, Card, CardHeader, Dot, EmptyState, KeyValue, PageHeader, short } from '@/components/ui/primitives'
 import { settlementRows } from '@/lib/metering/aggregates'
+import { requireUserPage } from '@/lib/auth/session'
 import { formatAmount } from '@/lib/money'
 
 export const dynamic = 'force-dynamic'
@@ -8,8 +9,9 @@ export const dynamic = 'force-dynamic'
  * Settlements. This is where PageSure proves it is actually connected to Stellar: every
  * row is a confirmed transaction hash with an explorer link.
  */
-export default function SettlementsPage() {
-  const rows = settlementRows(100)
+export default async function SettlementsPage() {
+  const user = await requireUserPage()
+  const rows = settlementRows(user.organizationId, 100)
 
   return (
     <div className="flex flex-col gap-8">

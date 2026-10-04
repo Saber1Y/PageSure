@@ -36,15 +36,18 @@ export function rpcUrl(): string | undefined {
   return process.env.STELLAR_RPC_URL || undefined
 }
 
-/** Provider wallet that receives payments. */
-export function providerRecipient(): string {
-  const value = process.env.PROVIDER_RECIPIENT_G
-  if (!value) throw new Error('PROVIDER_RECIPIENT_G is not set')
-  if (!StrKey.isValidEd25519PublicKey(value)) {
-    throw new Error('PROVIDER_RECIPIENT_G is not a valid Stellar account')
-  }
-  return value
-}
+/*
+ * There is deliberately no `providerRecipient()` here any more.
+ *
+ * A process-wide recipient cannot be correct in a multi-tenant deployment: it silently sends
+ * every organization's revenue to whichever treasury was configured last. Payment routing goes
+ * through `lib/mpp/settlement.ts`, which resolves `service -> organization ->
+ * settlementRecipient`. Removing the function rather than deprecating it is the point — a
+ * helper still in scope is a helper someone will reach for, and it would compile.
+ *
+ * PROVIDER_RECIPIENT_G survives only as the channel *factory admin* in
+ * scripts/deploy-contracts.ts, which is a deployment role and not a payment destination.
+ */
 
 /**
  * Fee payer. Sponsors transaction fees so a paying agent never needs XLM, only USDC.

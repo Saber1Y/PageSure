@@ -1,12 +1,14 @@
 import Link from 'next/link'
 import { Badge, Card, Dot, EmptyState, PageHeader } from '@/components/ui/primitives'
 import { serviceRollups } from '@/lib/metering/aggregates'
+import { requireUserPage } from '@/lib/auth/session'
 import { formatAmount } from '@/lib/money'
 
 export const dynamic = 'force-dynamic'
 
-export default function ServicesPage() {
-  const services = serviceRollups()
+export default async function ServicesPage() {
+  const user = await requireUserPage()
+  const services = serviceRollups(user.organizationId)
 
   return (
     <div className="flex flex-col gap-8">

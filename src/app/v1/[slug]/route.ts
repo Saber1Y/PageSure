@@ -1,3 +1,4 @@
+import { requireSettlementRecipient } from '@/lib/mpp/settlement'
 import { resolveClaimedPayer } from '@/lib/identity/payer'
 import { resolveServiceBySlug, type ResolvedService } from '@/lib/services/registry'
 import { evaluatePreflight, evaluateAuthoritative } from '@/lib/policy/service'
@@ -7,7 +8,6 @@ import {
   markVerified,
   network,
   payerFromDid,
-  providerRecipient,
   takeVerifiedPayment,
 } from '@/lib/mpp/registry'
 import { runUpstream, UpstreamError } from '@/lib/upstream'
@@ -88,6 +88,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
 
   // ---- PHASE 1: preflight policy. The enforcement point. ----------------
   const preflightArgs = {
+    organizationId: service.organizationId,
     serviceId: service.id,
     serviceName: service.name,
     serviceStatus: service.status,
@@ -103,7 +104,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
   // A held request becomes ALLOW only if a human approved it, which created a
   // service-scoped, expiring grant. Re-run so the trace records the grant hit.
   if (presentedReviewId) {
-    const review = findPresentedReview(presentedReviewId, service.id, payer)
+    const review = findPresentedReview(service.organizationId, presentedReviewId, service.id, payer)
     if (review?.status === 'approved') {
       pre = evaluatePreflight(preflightArgs)
     }
@@ -111,6 +112,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
   const preflightTrace = pre.trace
 
   const baseRow = {
+    organizationId: service.organizationId,
     serviceId: service.id,
     policyId: service.policyId,
     sessionId: null,
@@ -129,6 +131,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
       policyTrace: preflightTrace,
     })
     recordActivity({
+      organizationId: service.organizationId,
       type: 'payment_blocked',
       ok: false,
       message: `Blocked ${payer} on ${service.name}`,
@@ -147,6 +150,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
 
   if (preflightTrace.decision === 'review') {
     const reviewId = createReview({
+      organizationId: service.organizationId,
       policyId: service.policyId ?? '',
       serviceId: service.id,
       wallet: payer,
@@ -162,6 +166,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
       policyTrace: preflightTrace,
     })
     recordActivity({
+      organizationId: service.organizationId,
       type: 'review_pending',
       ok: true,
       message: `Held ${payer} on ${service.name} for review`,
@@ -192,7 +197,10 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
 
   let challengeResponse: Response
   try {
-    const mppx = buildChargeMppx({ recipient: providerRecipient(), currency: service.assetContract })
+    const mppx = buildChargeMppx({
+      recipient: requireSettlementRecipient(service.organizationId),
+      currency: service.assetContract,
+    })
     const result = await mppx.charge(
       { amount: formatAmount(amountBase, service.decimals), description: service.name, externalId: requestId },
     )(rawRequest)
@@ -214,6 +222,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
     updateRequest(requestId, { status: 'failed' })
     const message = error instanceof Error ? error.message : 'payment failed'
     recordActivity({
+      organizationId: service.organizationId,
       type: 'payment_blocked',
       ok: false,
       message: `Payment failed on ${service.name}`,
@@ -256,6 +265,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
       receiptReference: payment.reference,
     })
     const incidentId = recordIncident({
+      organizationId: service.organizationId,
       kind: 'charged_not_delivered',
       requestId,
       sessionId: null,
@@ -287,6 +297,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
       receiptReference: payment.reference,
     })
     recordIncident({
+      organizationId: service.organizationId,
       kind: 'charged_not_delivered',
       requestId,
       sessionId: null,
@@ -300,6 +311,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
       paymentTxHash: payment.reference,
     })
     recordActivity({
+      organizationId: service.organizationId,
       type: 'incident',
       ok: false,
       message: `Charged but not delivered on ${service.name}`,
@@ -334,6 +346,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
     })
 
     const settlementId = recordSettlement({
+      organizationId: service.organizationId,
       kind: 'charge',
       requestId,
       sessionId: null,
@@ -343,7 +356,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
       assetCode: service.assetCode,
       decimals: service.decimals,
       payer: verifiedPayer,
-      recipient: providerRecipient(),
+      recipient: requireSettlementRecipient(service.organizationId),
       network: assetNetwork,
       txHash: payment.reference,
       status: 'confirmed',
@@ -357,6 +370,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
     })
 
     recordActivity({
+      organizationId: service.organizationId,
       type: 'request_paid',
       ok: true,
       message: `${service.name} paid and delivered via ${result.provider}`,
@@ -380,6 +394,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
     const status = error instanceof UpstreamError ? error.status : 502
     updateRequest(requestId, { upstreamStatus: status, latencyMs: Date.now() - startedAt })
     recordIncident({
+      organizationId: service.organizationId,
       kind: 'upstream_failed',
       requestId,
       sessionId: null,

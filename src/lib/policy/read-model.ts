@@ -32,13 +32,19 @@ export interface PolicyWithUsage {
   usage: PolicyUsage
 }
 
-export function policiesWithUsage(): PolicyWithUsage[] {
+/**
+ * Scoped to one organization. Policy names are NOT globally unique (two organizations may
+ * both own a "Standard Access" policy), so every lookup filters on organizationId first and
+ * the policy id second — the pair, never the id alone, identifies a policy.
+ */
+export function policiesWithUsage(organizationId: string): PolicyWithUsage[] {
   const target = db()
   const now = Date.now()
 
   return target
     .select()
     .from(policies)
+    .where(eq(policies.organizationId, organizationId))
     .orderBy(desc(policies.createdAt))
     .all()
     .map((policy) => ({
@@ -47,28 +53,33 @@ export function policiesWithUsage(): PolicyWithUsage[] {
         allowlist: target
           .select()
           .from(policyAllowlist)
-          .where(eq(policyAllowlist.policyId, policy.id))
+          .where(and(eq(policyAllowlist.organizationId, organizationId), eq(policyAllowlist.policyId, policy.id)))
           .all(),
         denylist: target
           .select()
           .from(policyDenylist)
-          .where(eq(policyDenylist.policyId, policy.id))
+          .where(and(eq(policyDenylist.organizationId, organizationId), eq(policyDenylist.policyId, policy.id)))
           .all(),
         assets: target
           .select()
           .from(policyAssets)
-          .where(eq(policyAssets.policyId, policy.id))
+          .where(and(eq(policyAssets.organizationId, organizationId), eq(policyAssets.policyId, policy.id)))
           .all(),
         networks: target
           .select()
           .from(policyNetworks)
-          .where(eq(policyNetworks.policyId, policy.id))
+          .where(and(eq(policyNetworks.organizationId, organizationId), eq(policyNetworks.policyId, policy.id)))
           .all(),
         services: target
           .select({ id: services.id, name: services.name, slug: services.slug })
           .from(policyServiceLinks)
           .innerJoin(services, eq(policyServiceLinks.serviceId, services.id))
-          .where(eq(policyServiceLinks.policyId, policy.id))
+          .where(
+            and(
+              eq(policyServiceLinks.organizationId, organizationId),
+              eq(policyServiceLinks.policyId, policy.id),
+            ),
+          )
           .all(),
         activeGrants:
           target
@@ -76,6 +87,7 @@ export function policiesWithUsage(): PolicyWithUsage[] {
             .from(policyGrants)
             .where(
               and(
+                eq(policyGrants.organizationId, organizationId),
                 eq(policyGrants.policyId, policy.id),
                 isNull(policyGrants.revokedAt),
                 gt(policyGrants.expiresAt, now),

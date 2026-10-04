@@ -8,7 +8,8 @@ import { resolveServiceById } from '@/lib/services/registry'
 import { formatAmount } from '@/lib/money'
 import { PolicyTraceView } from '@/components/dashboard/policy-trace'
 import { explorerUrl } from '@/lib/metering/record'
-import { desc, eq } from 'drizzle-orm'
+import { requireUserPage } from '@/lib/auth/session'
+import { and, desc, eq } from 'drizzle-orm'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,8 +19,12 @@ export const dynamic = 'force-dynamic'
  */
 
 export default async function SessionPage({ params }: { params: Promise<{ id: string }> }) {
+  const user = await requireUserPage()
   const { id } = await params
-  const session = getSession(id)
+  const org = user.organizationId
+  // Scoped on organization: a session id from another tenant renders as "No such session",
+  // identical to an id that never existed.
+  const session = getSession(org, id)
   if (!session) {
     return (
       <Card>
@@ -32,19 +37,19 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
   const events = db()
     .select()
     .from(sessionEvents)
-    .where(eq(sessionEvents.sessionId, id))
+    .where(and(eq(sessionEvents.sessionId, id), eq(sessionEvents.organizationId, org)))
     .orderBy(sessionEvents.createdAt)
     .all()
 
   const sessionRequests = db()
     .select({ id: requests.id })
     .from(requests)
-    .where(eq(requests.sessionId, id))
+    .where(and(eq(requests.sessionId, id), eq(requests.organizationId, org)))
     .orderBy(desc(requests.createdAt))
     .limit(20)
     .all()
 
-  const example = sessionRequests[0] ? requestDetail(sessionRequests[0].id) : null
+  const example = sessionRequests[0] ? requestDetail(org, sessionRequests[0].id) : null
 
   return (
     <div className="flex flex-col gap-8">

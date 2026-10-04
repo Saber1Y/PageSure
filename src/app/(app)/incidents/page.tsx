@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { Badge, Card, EmptyState, KeyValue, PageHeader } from '@/components/ui/primitives'
 import { incidentRows } from '@/lib/metering/aggregates'
 import { resolveServiceById } from '@/lib/services/registry'
+import { requireUserPage } from '@/lib/auth/session'
 import { formatAmount } from '@/lib/money'
 
 export const dynamic = 'force-dynamic'
@@ -11,8 +12,9 @@ export const dynamic = 'force-dynamic'
  * block applied after verification means the money already moved. PageSure shows that
  * cost rather than hiding it. No auto-refund is claimed and no allowlist is touched.
  */
-export default function IncidentsPage() {
-  const rows = incidentRows(100)
+export default async function IncidentsPage() {
+  const user = await requireUserPage()
+  const rows = incidentRows(user.organizationId, 100)
 
   return (
     <div className="flex flex-col gap-8">

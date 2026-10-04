@@ -21,6 +21,12 @@ export function newId(prefix: string): string {
 export interface RecordRequestInput {
   /** Optional: caller supplies the id so MPP externalId can reference it. */
   id?: string
+  /**
+   * Owning organization, taken from the resolved service. Required with no default on
+   * purpose: every dashboard aggregate filters on it, so an unscoped row would be invisible
+   * in counts while still existing and still settling money.
+   */
+  organizationId: string
   serviceId: string
   policyId: string | null
   sessionId: string | null
@@ -53,6 +59,7 @@ export function recordRequest(input: RecordRequestInput): string {
     .insert(requests)
     .values({
       id,
+      organizationId: input.organizationId,
       serviceId: input.serviceId,
       policyId: input.policyId,
       sessionId: input.sessionId,
@@ -98,6 +105,8 @@ export function updateRequest(
 }
 
 export interface RecordSettlementInput {
+  /** The organization whose treasury received the money. */
+  organizationId: string
   kind: 'charge' | 'session'
   requestId: string | null
   sessionId: string | null
@@ -122,6 +131,7 @@ export function recordSettlement(input: RecordSettlementInput): string {
     .insert(settlements)
     .values({
       id,
+      organizationId: input.organizationId,
       kind: input.kind,
       requestId: input.requestId,
       sessionId: input.sessionId,
@@ -151,6 +161,7 @@ export function explorerUrl(network: string, txHash: string): string {
 }
 
 export interface RecordIncidentInput {
+  organizationId: string
   kind:
     | 'charged_not_delivered'
     | 'settlement_failed'
@@ -174,6 +185,7 @@ export function recordIncident(input: RecordIncidentInput): string {
     .insert(incidents)
     .values({
       id,
+      organizationId: input.organizationId,
       kind: input.kind,
       requestId: input.requestId,
       sessionId: input.sessionId,
@@ -192,6 +204,7 @@ export function recordIncident(input: RecordIncidentInput): string {
 }
 
 export interface RecordActivityInput {
+  organizationId: string
   type:
     | 'request_paid'
     | 'session_opened'
@@ -216,6 +229,7 @@ export function recordActivity(input: RecordActivityInput): void {
     .insert(activityEvents)
     .values({
       id: newId('act'),
+      organizationId: input.organizationId,
       type: input.type,
       ok: input.ok ?? true,
       message: input.message,

@@ -1,5 +1,5 @@
 import { db } from '@/lib/db/client'
-import { requests, services } from '@/lib/db/schema'
+import { requests } from '@/lib/db/schema'
 import { and, eq, gte, inArray, sql } from 'drizzle-orm'
 import { toBig } from '@/lib/money'
 import { evaluate, loadPolicySnapshot } from './engine'
@@ -10,15 +10,22 @@ import type { PolicyContext, PolicySnapshot, PolicyTrace } from './types'
  * gateway reads as a pipeline rather than as policy plumbing.
  */
 
-/** Rolling 24h settled spend for a payer, base units. */
-export function payerSpend24h(payer: string): string {
+/**
+ * Rolling 24h settled spend for a payer against ONE organization's services, base units.
+ *
+ * Scoped to the organization on purpose. The daily cap is a property of a policy, and a
+ * policy belongs to an organization. If this summed a payer's spend everywhere, one
+ * tenant's volume could exhaust another tenant's cap — a denial-of-service across a tenant
+ * boundary, caused by a query that looked correct.
+ */
+export function payerSpend24h(organizationId: string, payer: string): string {
   const since = Date.now() - 24 * 60 * 60 * 1000
   const rows = db()
     .select({ amount: requests.amountBase })
     .from(requests)
-    .innerJoin(services, eq(requests.serviceId, services.id))
     .where(
       and(
+        eq(requests.organizationId, organizationId),
         inArray(requests.status, ['paid', 'charged_not_delivered']),
         sql`coalesce(${requests.verifiedPayer}, ${requests.claimedPayer}) = ${payer}`,
         gte(requests.createdAt, since),
@@ -29,6 +36,8 @@ export function payerSpend24h(payer: string): string {
 }
 
 export interface EvaluateInput {
+  /** Owning organization of the service. Supplied by the gateway from the resolved service. */
+  organizationId: string
   serviceId: string
   serviceName: string
   serviceStatus: 'live' | 'paused' | 'draft'
@@ -42,6 +51,7 @@ export interface EvaluateInput {
 
 function buildContext(input: EvaluateInput): PolicyContext {
   return {
+    organizationId: input.organizationId,
     serviceId: input.serviceId,
     serviceName: input.serviceName,
     serviceStatus: input.serviceStatus,
@@ -51,7 +61,7 @@ function buildContext(input: EvaluateInput): PolicyContext {
     amountBase: input.amountBase,
     mode: input.mode,
     payer: input.payer,
-    payerSpend24hBase: payerSpend24h(input.payer),
+    payerSpend24hBase: payerSpend24h(input.organizationId, input.payer),
   }
 }
 
@@ -66,7 +76,9 @@ export interface Evaluation {
  * Counts against the rate limiter.
  */
 export function evaluatePreflight(input: EvaluateInput): Evaluation {
-  const snapshot = input.servicePolicyId ? loadPolicySnapshot(input.servicePolicyId, input.serviceId) : null
+  const snapshot = input.servicePolicyId
+    ? loadPolicySnapshot(input.organizationId, input.servicePolicyId, input.serviceId)
+    : null
   const trace = evaluate(snapshot, buildContext(input), 'preflight', { countRateLimit: true })
   return { snapshot, trace }
 }

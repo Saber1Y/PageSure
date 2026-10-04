@@ -1,5 +1,5 @@
 import { resolveServiceBySlug } from '@/lib/services/registry'
-import { providerRecipient } from '@/lib/mpp/registry'
+import { requireSettlementRecipient } from '@/lib/mpp/settlement'
 import { confirmSession } from '@/lib/sessions/manager'
 import { getSession } from '@/lib/sessions/lookup'
 import { recordActivity, recordIncident } from '@/lib/metering/record'
@@ -42,7 +42,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ slug: stri
     return problem(400, 'invalid_body', 'sessionId and channelContract are required')
   }
 
-  const session = getSession(sessionId)
+  // Scoped on organization AND service: a session id from another tenant or another service
+  // must not be confirmable here. The organization check is what makes the service check
+  // below meaningful rather than cosmetic.
+  const session = getSession(service.organizationId, sessionId)
   if (!session) return problem(404, 'session_not_found', 'No such session')
   if (session.serviceId !== service.id) {
     return problem(403, 'session_service_mismatch', 'This session belongs to a different service')
@@ -52,11 +55,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ slug: stri
   }
 
   const result = await confirmSession({
+    organizationId: service.organizationId,
     sessionId,
     channelContract,
     expected: {
       funder: session.funder,
-      recipient: session.recipient || providerRecipient(),
+      recipient: session.recipient || requireSettlementRecipient(service.organizationId),
       assetContract: service.assetContract,
       commitmentPublicKeyG: session.commitmentPublicKey,
     },
@@ -64,6 +68,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ slug: stri
 
   if (!result.ok) {
     recordIncident({
+      organizationId: service.organizationId,
       kind: 'upstream_failed',
       requestId: null,
       sessionId,
@@ -80,6 +85,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ slug: stri
   }
 
   recordActivity({
+    organizationId: service.organizationId,
     type: 'session_opened',
     ok: true,
     message: `Channel ${channelContract.slice(0, 12)}... verified and active`,

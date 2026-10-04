@@ -22,8 +22,15 @@ import { eq } from 'drizzle-orm'
 
 /** What a payer is told to pay, and what a settlement row records. */
 export interface SettlementTarget {
-  /** Stellar account that receives the funds. */
-  recipient: string
+  /**
+   * Stellar account that receives the funds, or null when the organization has not connected
+   * one yet.
+   *
+   * Null is a normal state during onboarding, not a fault. Every caller that needs somewhere
+   * to send money must handle it, because "we know who you are but not where to pay you" is
+   * the honest answer for an organization that signed up with an email and stopped there.
+   */
+  recipient: string | null
   /**
    * G... (med25519) commitment public key, for channel-mode services.
    *
@@ -52,6 +59,10 @@ export function settlementTargetForOrganization(organizationId: string): Settlem
     .get()
 
   if (!row) return null
+  // A null recipient is a legitimate state, not corruption: signup completes on email alone
+  // and the settlement wallet is connected later. It is carried through as null so the
+  // callers that need a payable account fail with a precise reason instead of passing an
+  // empty string down into a payment instruction.
   return { recipient: row.recipient, commitmentPublicKey: row.commitmentPublicKey }
 }
 
@@ -66,6 +77,14 @@ export function requireSettlementRecipient(organizationId: string): string {
   const target = settlementTargetForOrganization(organizationId)
   if (!target) {
     throw new SettlementUnavailableError(`organization ${organizationId} does not exist`)
+  }
+  if (!target.recipient) {
+    // The organization completed signup but has not connected a settlement wallet. This is a
+    // setup step the operator can finish, so the message says so rather than implying the
+    // data is broken.
+    throw new SettlementUnavailableError(
+      `organization ${organizationId} has no settlement account connected yet`,
+    )
   }
   if (!StrKey.isValidEd25519PublicKey(target.recipient)) {
     // Surfaced explicitly because the stored value came from a user during signup, so this

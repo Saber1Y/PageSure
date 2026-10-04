@@ -10,6 +10,7 @@ import {
   type DecisionTone,
 } from '@/components/ui/primitives'
 import { overviewStats, recentActivity, serviceRollups } from '@/lib/metering/aggregates'
+import { requireUserPage } from '@/lib/auth/session'
 import { formatAmount } from '@/lib/money'
 
 export const dynamic = 'force-dynamic'
@@ -27,10 +28,12 @@ const ACTIVITY_TONE: Record<string, { tone: DecisionTone; prefix: string }> = {
   incident: { tone: 'block', prefix: 'Incident' },
 }
 
-export default function OverviewPage() {
-  const stats = overviewStats()
-  const services = serviceRollups()
-  const activity = recentActivity(14)
+export default async function OverviewPage() {
+  const user = await requireUserPage()
+  const org = user.organizationId
+  const stats = overviewStats(org)
+  const services = serviceRollups(org)
+  const activity = recentActivity(org, 14)
 
   return (
     <div className="flex flex-col gap-8">

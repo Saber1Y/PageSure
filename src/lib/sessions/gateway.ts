@@ -4,7 +4,8 @@ import { paymentSessions, sessionEvents } from '@/lib/db/schema'
 import type { ResolvedService } from '@/lib/services/registry'
 import { evaluateAuthoritative } from '@/lib/policy/service'
 import { loadPolicySnapshot } from '@/lib/policy/engine'
-import { buildChannelMppx, network, providerRecipient } from '@/lib/mpp/registry'
+import { buildChannelMppx, network } from '@/lib/mpp/registry'
+import { requireSettlementRecipient } from '@/lib/mpp/settlement'
 import { runUpstream, UpstreamError } from '@/lib/upstream'
 import { newId, recordIncident, recordRequest } from '@/lib/metering/record'
 import { formatAmount, toBig } from '@/lib/money'
@@ -35,8 +36,10 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
   const { request, service, url, startedAt } = input
   const amountBase = service.priceBase
 
-  // The credential names the channel. Decode it to find which session this is.
-  const channelAddress = readChannelFromCredential(request)
+  // The credential names the channel. Decode it to find which session this is, and whether
+  // the caller is asking for service (a voucher) or for settlement (a close).
+  const credential = readCredential(request)
+  const channelAddress = credential.channel
   if (!channelAddress) {
     return problem(
       400,
@@ -70,10 +73,49 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
     )
   }
 
+  // ---- Settlement requests are not billable service requests ----------------
+  //
+  // A `close` credential asks the channel contract to withdraw the cumulative, not to buy
+  // the service. It must branch here, ahead of policy evaluation and the upstream call,
+  // because running it down the voucher path would price a settlement as a service request
+  // and advance the cumulative for a withdrawal rather than for delivered work.
+  //
+  // PageSure deliberately cannot execute the withdrawal itself. The channel contract requires
+  // `to.require_auth()`, where `to` is the organization's treasury account, and the MPP SDK
+  // submits the close with a `feePayer.envelopeSigner` holding that account's secret. Under the
+  // external-signer model PageSure stores neither the treasury secret nor the commitment key,
+  // so it has no authority to broadcast. The organization's signer service signs the withdrawal
+  // with the commitment key and submits it with its own treasury account.
+  if (credential.action === 'close') {
+    addSessionEvent(
+      service.organizationId,
+      session.id,
+      'close_requested',
+      `Close credential presented for ${channelAddress}`,
+      '0',
+      null,
+    )
+    return problem(
+      501,
+      'settlement_not_submitted_by_pagesure',
+      'This channel settles through the organization signer service, not through PageSure. ' +
+        'Fetch the authoritative cumulative from the settlement endpoint, sign it with the ' +
+        'organization commitment key, and submit the withdrawal with the organization treasury account.',
+      {
+        sessionId: session.id,
+        channel: channelAddress,
+        cumulativeBase: session.cumulativeBase,
+        requestCount: session.requestCount,
+        settlementEndpoint: `/v1/${service.slug}/session/settlement`,
+      },
+    )
+  }
+
   // ---- AUTHORITATIVE policy. Identity comes from the channel, not a header. --
-  const snapshot = service.policyId ? loadPolicySnapshot(service.policyId, service.id) : null
+  const snapshot = service.policyId ? loadPolicySnapshot(service.organizationId, service.policyId, service.id) : null
   const trace: PolicyTrace = evaluateAuthoritative(
     {
+      organizationId: service.organizationId,
       serviceId: service.id,
       serviceName: service.name,
       serviceStatus: service.status,
@@ -89,6 +131,7 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
 
   if (trace.decision !== 'allow') {
     const requestId = recordRequest({
+      organizationId: service.organizationId,
       serviceId: service.id,
       policyId: service.policyId,
       sessionId: session.id,
@@ -101,7 +144,7 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
       policyDecision: 'block',
       policyTrace: trace,
     })
-    addSessionEvent(session.id, 'blocked', `Blocked: ${trace.reason ?? 'policy decision'}`, amountBase, requestId)
+    addSessionEvent(service.organizationId, session.id, 'blocked', `Blocked: ${trace.reason ?? 'policy decision'}`, amountBase, requestId)
     // Nothing was committed, so the payer owes nothing for this request.
     return policyResponse(403, 'blocked', trace, {
       requestId,
@@ -120,7 +163,10 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
     const mppx = buildChannelMppx({
       channel: session.channelContract,
       commitmentPublicKey: session.commitmentPublicKey,
-      recipient: providerRecipient(),
+      // The account this channel was actually opened against, not the organization's current
+      // treasury. Editing the treasury must not repoint a channel that already has funds
+      // escrowed against a different `to`; the contract would reject the withdrawal.
+      recipient: session.recipient || requireSettlementRecipient(service.organizationId),
       currency: service.assetContract,
     })
     const result = await mppx.channel(
@@ -158,6 +204,7 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
     })
 
     const recordedId = recordRequest({
+      organizationId: service.organizationId,
       id: requestId,
       serviceId: service.id,
       policyId: service.policyId,
@@ -186,7 +233,7 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
       .where(eq(paymentSessions.id, session.id))
       .run()
 
-    addSessionEvent(session.id, 'request', `${service.name} request delivered`, amountBase, recordedId)
+    addSessionEvent(service.organizationId, session.id, 'request', `${service.name} request delivered`, amountBase, recordedId)
 
     return json(200, result.body, {
       'X-Pagesure-Decision': 'allow',
@@ -199,6 +246,7 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
     const message = error instanceof Error ? error.message : 'upstream failed'
     const status = error instanceof UpstreamError ? error.status : 502
     recordRequest({
+      organizationId: service.organizationId,
       id: requestId,
       serviceId: service.id,
       policyId: service.policyId,
@@ -215,6 +263,7 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
       latencyMs: Date.now() - startedAt,
     })
     recordIncident({
+      organizationId: service.organizationId,
       kind: 'upstream_failed',
       requestId,
       sessionId: session.id,
@@ -238,6 +287,7 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
 }
 
 export function addSessionEvent(
+  organizationId: string,
   sessionId: string,
   type:
     | 'created'
@@ -256,6 +306,7 @@ export function addSessionEvent(
     .insert(sessionEvents)
     .values({
       id: newId('sev'),
+      organizationId,
       sessionId,
       type,
       detail,
@@ -267,26 +318,46 @@ export function addSessionEvent(
 }
 
 /**
- * Read the channel address from the presented credential.
+ * What the presented credential asks for.
  *
- * The voucher payload is signed by the commitment key and bound to the channel, but
- * this read is only used to LOCATE the session. The commitment itself is verified by
- * mppx inside `mppx.channel()`, which is the sole authority on whether the cumulative
- * advanced.
+ * The credential payload is `{ action, amount, signature }`, and `action` decides which path
+ * runs. This was previously ignored: a `close` credential fell through to the voucher branch,
+ * where it was billed as if it were a service request. That is wrong in the direction that
+ * matters — a settlement request would be treated as a payable voucher and the cumulative
+ * would advance for a withdrawal rather than for delivered work.
  */
-function readChannelFromCredential(request: Request): string | null {
+type CredentialAction = 'voucher' | 'close'
+
+interface ParsedCredential {
+  channel: string | null
+  action: CredentialAction
+}
+
+/**
+ * Read the channel address and requested action from the presented credential.
+ *
+ * The voucher payload is signed by the commitment key and bound to the channel, but this read
+ * is only used to LOCATE the session. The commitment itself is verified by mppx inside
+ * `mppx.channel()`, which is the sole authority on whether the cumulative advanced.
+ *
+ * An absent action is treated as a voucher, since that is what the field has always meant.
+ */
+function readCredential(request: Request): ParsedCredential {
   const raw = request.headers.get('authorization') ?? request.headers.get('Payment-Authorization')
-  if (!raw) return null
+  if (!raw) return { channel: null, action: 'voucher' }
   const match = /^Payment\s+(.+)$/i.exec(raw.trim())
-  if (!match?.[1]) return null
+  if (!match?.[1]) return { channel: null, action: 'voucher' }
   try {
     const base64 = match[1].trim().replace(/-/g, '+').replace(/_/g, '/')
     const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
     const parsed = JSON.parse(Buffer.from(padded, 'base64').toString('utf8')) as {
       challenge?: { request?: string }
-      payload?: { channel?: string }
+      payload?: { channel?: string; action?: string }
     }
-    if (typeof parsed.payload?.channel === 'string') return parsed.payload.channel
+
+    const action: CredentialAction = parsed.payload?.action === 'close' ? 'close' : 'voucher'
+
+    if (typeof parsed.payload?.channel === 'string') return { channel: parsed.payload.channel, action }
 
     // Fall back to decoding the challenge request blob, which carries the channel.
     const requestBlob = parsed.challenge?.request
@@ -294,11 +365,11 @@ function readChannelFromCredential(request: Request): string | null {
       const b64 = requestBlob.replace(/-/g, '+').replace(/_/g, '/')
       const p = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '=')
       const decoded = JSON.parse(Buffer.from(p, 'base64').toString('utf8')) as { channel?: string }
-      if (typeof decoded.channel === 'string') return decoded.channel
+      if (typeof decoded.channel === 'string') return { channel: decoded.channel, action }
     }
-    return null
+    return { channel: null, action }
   } catch {
-    return null
+    return { channel: null, action: 'voucher' }
   }
 }
 

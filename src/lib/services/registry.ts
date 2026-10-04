@@ -2,8 +2,18 @@ import { db } from '@/lib/db/client'
 import { services } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 
-/** Result of looking up a service from its URL slug. */
+/**
+ * Result of looking up a service from its URL slug.
+ *
+ * `organizationId` is on this type because the gateway is where tenancy has to be resolved.
+ * `/v1/:slug` carries no organization context, so the slug is global and the owning
+ * organization is read from the service row. Everything downstream — policy evaluation,
+ * metering rows, and eventually the settlement recipient — derives from here, which means
+ * a call site cannot forget to establish the tenant: the type forces it.
+ */
 export interface ResolvedService {
+  /** Owning organization. The single origin of tenant scope on the gateway path. */
+  organizationId: string
   id: string
   slug: string
   name: string
@@ -41,6 +51,7 @@ function normalise(row: RawService): ResolvedService {
   const mode = row.mode === 'channel' ? 'channel' : 'charge'
   const status = row.status === 'live' || row.status === 'paused' ? row.status : 'draft'
   return {
+    organizationId: row.organizationId,
     id: row.id,
     slug: row.slug,
     name: row.name,
