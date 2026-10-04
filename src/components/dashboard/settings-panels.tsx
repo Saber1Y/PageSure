@@ -52,12 +52,12 @@ export function TreasuryPanel({
         return
       }
 
-      // Read the account AFTER the access prompt. This challenge is bound to the address it is
-      // issued against, so a stale one is not a failed signature but a challenge nobody can
-      // satisfy. The access prompt is the most likely moment for the active account to change.
-      const claimed = (await readSigningAddress()) ?? detection.publicKey ?? ''
+      // This challenge is bound to the address it is issued against, so the account has to be
+      // read after the access prompt: that prompt is where a user picks an account for the
+      // first time, and an address read before it is a claim nobody can satisfy.
+      const bound = (await readSigningAddress()) ?? detection.publicKey ?? ''
 
-      const issued = await requestTreasuryChallengeAction(claimed)
+      const issued = await requestTreasuryChallengeAction(bound)
       if (!issued.ok || !issued.challenge || !issued.challengeId) {
         setError(
           issued.failure === 'forbidden'
@@ -71,11 +71,15 @@ export function TreasuryPanel({
         return
       }
 
-      const signed = await signChallenge(issued.challenge)
+      // Pin the signing account to the one the challenge was bound to, so the signature
+      // provably comes from that key rather than from whatever is active at the prompt.
+      const signed = await signChallenge(issued.challenge, { address: bound })
       if (!signed.ok) {
         setError(signed.error || 'The wallet could not sign the challenge.')
         return
       }
+
+      const claimed = signed.signerAddress ?? bound
 
       const result = await connectTreasuryAction({
         challengeId: issued.challengeId,
@@ -83,7 +87,7 @@ export function TreasuryPanel({
         wallet: claimed,
       })
       if (!result.ok) {
-        if (result.failure === 'signature_failed') {
+        if (result.failure === 'signature_failed' || result.failure === 'challenge_failed') {
           // Almost always an account switch rather than a broken wallet: name both addresses.
           const active = await readSigningAddress()
           setError(

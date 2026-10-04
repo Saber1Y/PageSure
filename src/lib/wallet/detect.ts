@@ -133,7 +133,7 @@ export async function promptWalletAccess(): Promise<{ ok: true } | { ok: false; 
   }
 }
 
-export type SignResult = { ok: true; signature: string } | { ok: false; error: string }
+export type SignResult = { ok: true; signature: string; signerAddress: string | null } | { ok: false; error: string }
 
 /**
  * The account that is active RIGHT NOW.
@@ -183,10 +183,32 @@ function toBase64(value: unknown): string {
   return btoa(bin)
 }
 
-/** Ask the wallet to sign the server-issued challenge. */
-export async function signChallenge(message: string): Promise<SignResult> {
+/**
+ * Ask the wallet to sign the server-issued challenge.
+ *
+ * `signerAddress` is the reason this function returns more than a signature, and callers should
+ * send it as the claimed wallet rather than an address read beforehand.
+ *
+ * Freighter signs with whichever account is active at the moment `signMessage` is called, and it
+ * reports that account back as `signerAddress` (`@stellar/freighter-api` v6, SignMessageV4Response).
+ * That is the only authoritative statement of which key produced the signature. An address read
+ * from `getAddress()` is a snapshot of a *different* moment, and the two disagree whenever the
+ * active account changes in between - most often inside the `requestAccess()` prompt, which is
+ * exactly where a user chooses an account for the first time.
+ *
+ * Claiming the wrong account is not cosmetic: the server verifies the signature against the
+ * claimed key, so a mismatch cannot be recovered from and surfaces as `wrong_signer`, which reads
+ * like a wallet fault and is not one.
+ *
+ * It is still only a claim. A dishonest extension could name any key here; the server-side
+ * signature check is what actually decides who authenticated.
+ */
+export async function signChallenge(
+  message: string,
+  opts?: { address?: string },
+): Promise<SignResult> {
   try {
-    const res = await signMessage(message)
+    const res = await signMessage(message, opts?.address ? { address: opts.address } : undefined)
     if (res?.error) {
       return { ok: false, error: detailOf(res.error) }
     }
@@ -198,7 +220,11 @@ export async function signChallenge(message: string): Promise<SignResult> {
     // shapes to the base64 the server-side verifier expects.
     const encoded = toBase64(signature)
     if (!encoded) return { ok: false, error: 'The wallet returned an unreadable signature.' }
-    return { ok: true, signature: encoded }
+    const signerAddress =
+      typeof (res as { signerAddress?: unknown }).signerAddress === 'string'
+        ? (res as { signerAddress: string }).signerAddress
+        : null
+    return { ok: true, signature: encoded, signerAddress }
   } catch (err) {
     return { ok: false, error: detailOf(err) || 'Could not reach the wallet extension.' }
   }

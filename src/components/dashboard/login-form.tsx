@@ -110,11 +110,6 @@ export function LoginPanel({
         return
       }
 
-      // Read the account AFTER the access prompt. That prompt is where the active account can
-      // change, and Freighter signs with whatever is active when signMessage is called, so an
-      // address read beforehand is a stale claim that cannot verify.
-      const claimed = (await readSigningAddress()) ?? detection.publicKey
-
       setStage('signing')
       const signed = await signChallenge(challenge.challenge)
       if (!signed.ok) {
@@ -128,6 +123,10 @@ export function LoginPanel({
         )
         return
       }
+
+      // The address the extension says it signed with, which is the only authoritative
+      // statement of that. Anything read earlier is a snapshot of a different moment.
+      const claimed = signed.signerAddress ?? (await readSigningAddress()) ?? detection.publicKey
 
       setStage('verifying')
       const result = await verifyChallengeAction({
@@ -143,14 +142,11 @@ export function LoginPanel({
         // A signature that does not verify is almost always an account switch rather than a
         // broken wallet. Name the two accounts instead of leaving the operator to guess which
         // one the extension actually used.
-        if (result.reason === 'wrong_signer') {
-          const active = await readSigningAddress()
-          if (active && claimed && active !== claimed) {
-            setError(
-              `Freighter signed with ${active} but the page was expecting ${claimed}. Lock the extension, select one account, unlock it, and try again.`,
-            )
-            return
-          }
+        if (result.reason === 'wrong_signer' && claimed && detection.publicKey) {
+          setError(
+            `Freighter signed with ${claimed} but was showing ${detection.publicKey}. Lock the extension, select one account, unlock it, and try again.`,
+          )
+          return
         }
         setError(result.error ?? 'The signature could not be verified.')
         return
