@@ -1,22 +1,39 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { StrKey } from '@stellar/stellar-sdk'
 import { and, eq, gt, isNull, lt, sql } from 'drizzle-orm'
 import { cookies } from 'next/headers'
+import { notFound, redirect } from 'next/navigation'
 import { db } from '@/lib/db/client'
-import { authAttempts, loginChallenges, sessions, users } from '@/lib/db/schema'
+import { validateSignerRegistration } from '@/lib/mpp/signer-registration'
+import {
+  authAttempts,
+  loginChallenges,
+  organizationMembers,
+  organizations,
+  sessions,
+  users,
+} from '@/lib/db/schema'
 
 /**
  * Dashboard auth.
  *
  * There is no password. Two mechanisms, one session layer:
  *
- *   wallet sign-in   SEP-0007 challenge. Proves control of PROVIDER_RECIPIENT_G, the
- *                    settlement key. This is the ROOT: the first successful proof
- *                    creates the operator row, so nothing needs seeding.
+ *   wallet sign-in   SEP-0007 challenge, self-certifying. Proves control of whatever key
+ *                    the client names. Anyone can sign up; nothing is pre-provisioned.
  *   passkey          WebAuthn. Registered only from an authenticated session, so it is
  *                    a second and revocable way in, never the way in.
  *
  * Both mint the same signed session token. The cookie holds `token.signature`; only an
  * HMAC of the token is stored, so a database leak yields no usable sessions.
+ *
+ * Authentication and authorization are deliberately separate concerns:
+ *
+ *   signature  ->  proves CONTROL of a key. Worthless on its own as access.
+ *   membership ->  user -> organization -> role. This is what grants access.
+ *
+ * requireUser() is the only gate provider data passes through, and it guarantees a
+ * non-null organizationId so no query can be written without a tenant scope.
  *
  * The gateway and the playground stay PUBLIC on purpose: agents have no session, and
  * they authenticate by paying, which is the entire point of the product.
@@ -69,10 +86,80 @@ export async function destroySession(): Promise<void> {
 
 export interface AuthedUser {
   id: string
+  /**
+   * The tenant this user belongs to. Non-null on every AuthedUser by construction:
+   * currentUser() drops rows without an organization rather than returning them, so no
+   * caller can forget to scope a query.
+   */
+  organizationId: string
+  /** Rendered in the dashboard shell so the active tenant is never ambiguous. */
+  organizationName: string
   email: string | null
   displayName: string
-  role: 'owner' | 'operator'
+  /**
+   * Copy of the active membership role, surfaced so the UI can hide controls the viewer
+   * cannot use. Authorization itself reads `organization_members`, not this.
+   */
+  role: 'owner' | 'operator' | 'analyst'
   walletPublicKey: string | null
+}
+
+/**
+ * The authenticated person, resolved from the session cookie, before any tenant filtering.
+ *
+ * This is the primitive `currentUser()` is built on, split out because onboarding needs an
+ * identity for someone who does not have an organization yet: the account is created when
+ * the address is proven and the organization is named in the next step, so between the two
+ * there is a valid session belonging to a user with no tenant.
+ *
+ * Only the cookie signature is trusted here. It answers "which account is this?", never
+ * "what may it read?", so nothing organization-scoped may be authorized off this return
+ * value. Callers that need tenant scope must go through `currentUser`.
+ */
+export async function sessionUserId(): Promise<string | null> {
+  const store = await cookies()
+  const raw = store.get(COOKIE)?.value
+  if (!raw) return null
+
+  const [token, signature] = raw.split('.')
+  if (!token || !signature) return null
+
+  // Verify the signature before touching the database.
+  const expected = sign(token)
+  const a = Buffer.from(signature)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null
+
+  const row = db()
+    .select({ userId: sessions.userId })
+    .from(sessions)
+    .where(and(eq(sessions.id, tokenHash(token)), gt(sessions.expiresAt, Date.now())))
+    .get()
+
+  return row?.userId ?? null
+}
+
+/**
+ * Identity for somebody who has proven their address but has no organization yet.
+ *
+ * `currentUser()` inner-joins `organization_members`, so it returns null for exactly the person
+ * who is midway through joining a team: the account exists, the address is proven, the
+ * membership does not. Accepting an invitation happens at precisely that moment, which made
+ * `requireUser()` the wrong gate there - the invitee was told to sign in while already signed in.
+ *
+ * Like `sessionUserId()`, this answers "who is this?" and never "what may they read?". Nothing
+ * organization-scoped may be authorized from its return value; callers that need tenant scope
+ * must go through `currentUser`.
+ */
+export async function sessionIdentity(): Promise<{ id: string; email: string | null } | null> {
+  const userId = await sessionUserId()
+  if (!userId) return null
+  const row = db()
+    .select({ id: users.id, email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .get()
+  return row ?? null
 }
 
 export async function currentUser(): Promise<AuthedUser | null> {
@@ -95,31 +182,96 @@ export async function currentUser(): Promise<AuthedUser | null> {
       // AuthedUser.id (passkey enrolment writes userId) point at a session row instead.
       id: users.id,
       sessionId: sessions.id,
+      organizationId: users.organizationId,
+      organizationName: organizations.name,
       email: users.email,
       displayName: users.displayName,
-      role: users.role,
+      // Read from the membership row, not from users.role. The denormalized column on
+      // `users` is a cache for display, and an earlier revision of this query trusted it -
+      // which meant a demotion recorded in organization_members had no effect here, and the
+      // dashboard kept offering owner-only controls to someone who had just been demoted.
+      // Every path that creates a user with a tenant also creates their membership, so this
+      // join costs no legitimate session.
+      role: organizationMembers.role,
       walletPublicKey: users.walletPublicKey,
     })
     .from(sessions)
+    // innerJoin on organizations is what makes a user without a tenant fall out of the query
+    // entirely, rather than being returned with a null organizationId that a caller might
+    // forget to check.
     .innerJoin(users, eq(sessions.userId, users.id))
+    .innerJoin(organizations, eq(users.organizationId, organizations.id))
+    .innerJoin(
+      organizationMembers,
+      and(
+        eq(organizationMembers.userId, users.id),
+        eq(organizationMembers.organizationId, organizations.id),
+      ),
+    )
     .where(and(eq(sessions.id, tokenHash(token)), gt(sessions.expiresAt, Date.now())))
     .get()
 
-  if (!row) return null
+  // No organization means no tenant scope, so there is nothing this session may read. A
+  // valid signature alone never grants access — membership does. Dropping the row here is
+  // what makes requireUser() safe to trust as the single gate for every provider query.
+  if (!row?.organizationId) return null
+
   db().update(sessions).set({ lastSeenAt: Date.now() }).where(eq(sessions.id, row.sessionId)).run()
 
   return {
     id: row.id,
+    organizationId: row.organizationId,
+    organizationName: row.organizationName,
     email: row.email,
     displayName: row.displayName,
-    role: row.role,
+    role: row.role as AuthedUser['role'],
     walletPublicKey: row.walletPublicKey,
   }
 }
 
+/**
+ * The single gate for provider-owned data.
+ *
+ * Every read and write of an organization-scoped table goes through here and filters on
+ * the returned organizationId. Centralising it is the point: tenant isolation that depends
+ * on every call site remembering a filter is isolation that eventually leaks.
+ */
 export async function requireUser(): Promise<AuthedUser> {
   const user = await currentUser()
   if (!user) throw new Error('unauthenticated')
+  return user
+}
+
+/**
+ * Page-facing gate.
+ *
+ * Identical to requireUser() except an unauthenticated visitor is redirected instead of
+ * throwing. Throwing from a Server Component surfaces as a 500 error page, which would tell
+ * a signed-out visitor that something broke rather than that they need to sign in. The
+ * dashboard layout already redirects, so this is the defence for any page reached directly.
+ */
+export async function requireUserPage(): Promise<AuthedUser> {
+  const user = await currentUser()
+  if (!user) redirect('/login')
+  return user
+}
+
+/** Owner-only page gate. Operator sees 404 rather than a 403 so the surface is not disclosed. */
+export async function requireOwnerPage(): Promise<AuthedUser> {
+  const user = await requireUserPage()
+  if (user.role !== 'owner') notFound()
+  return user
+}
+
+/**
+ * Privileged operations — treasury changes, team management — are owner-only.
+ *
+ * Operators run day-to-day services, policies and reviews; they cannot move the money or
+ * add people. This is the check that makes `role` mean something.
+ */
+export async function requireOwner(): Promise<AuthedUser> {
+  const user = await requireUser()
+  if (user.role !== 'owner') throw new Error('forbidden: owner role required')
   return user
 }
 
@@ -181,11 +333,30 @@ export function clearLoginAttempts(clientKey: string): void {
  *
  * Storing the row is what makes a captured signature worthless on replay: the consume is
  * a conditional UPDATE, so two concurrent submissions cannot both win.
+ *
+ * `walletPublicKey` binds the challenge to one identity when the client already knows which
+ * wallet it is signing with. Left null, any key may answer it — correct for first-contact
+ * signup, where the server has never heard of the wallet before.
  */
-export function storeChallenge(id: string, challenge: string, purpose: 'enrol' | 'login', expiresAt: number): void {
+export function storeChallenge(
+  id: string,
+  challenge: string,
+  purpose: 'enrol' | 'login' | 'treasury',
+  expiresAt: number,
+  walletPublicKey?: string | null,
+  organizationId?: string | null,
+): void {
   db()
     .insert(loginChallenges)
-    .values({ id, challenge, purpose, expiresAt, createdAt: Date.now() })
+    .values({
+      id,
+      challenge,
+      purpose,
+      expiresAt,
+      walletPublicKey: walletPublicKey ?? null,
+      organizationId: organizationId ?? null,
+      createdAt: Date.now(),
+    })
     .run()
 }
 
@@ -195,7 +366,7 @@ export function storeChallenge(id: string, challenge: string, purpose: 'enrol' |
  * The `isNull(consumedAt)` guard is the whole point: without it, a signature replayed
  * within the TTL would be accepted again.
  */
-export function consumeChallenge(id: string, purpose: 'enrol' | 'login') {
+export function consumeChallenge(id: string, purpose: 'enrol' | 'login' | 'treasury') {
   const claimed = db()
     .update(loginChallenges)
     .set({ consumedAt: Date.now() })
@@ -218,38 +389,139 @@ export function pruneExpiredChallenges(): number {
 }
 
 // ---------------------------------------------------------------------------
-// Operator provisioning
+// Organizations and operator provisioning
 // ---------------------------------------------------------------------------
 
-/**
- * Find the operator by wallet, creating the account on first proof.
- *
- * Self-provisioning is the point: the alternative was a seeded row with a password in
- * .env. Here the first person to prove control of the configured settlement wallet
- * becomes the owner, and there is nothing to rotate or leak beforehand.
- */
-export function operatorForWallet(walletPublicKey: string): AuthedUser {
-  const target = db()
-  const existing = target.select().from(users).where(eq(users.walletPublicKey, walletPublicKey)).get()
+/** Errors a signup can legitimately fail with, mapped to copy by the caller. */
+export type SignupError =
+  | 'invalid_treasury'
+  | 'org_name_required'
+  | 'already_registered'
+  | 'invalid_signer_registration'
 
-  if (existing) {
-    return {
-      id: existing.id,
-      email: existing.email,
-      displayName: existing.displayName,
-      role: existing.role,
-      walletPublicKey: existing.walletPublicKey,
-    }
+/**
+ * Find the operator behind a wallet.
+ *
+ * Returns null for a wallet that has never signed in. This is NOT an error: an unknown
+ * wallet is exactly the self-serve signup case, and nothing about it is pre-provisioned.
+ */
+export function findUserByWallet(walletPublicKey: string): AuthedUser | null {
+  // Explicit projection rather than select(): users and organizations both define `id`,
+  // and an unqualified select over a join silently lets one table's column shadow the
+  // other's. Naming each field makes the intended source of every value unambiguous.
+  const row = db()
+    .select({
+      id: users.id,
+      organizationId: users.organizationId,
+      organizationName: organizations.name,
+      email: users.email,
+      displayName: users.displayName,
+      role: users.role,
+      walletPublicKey: users.walletPublicKey,
+    })
+    .from(users)
+    .innerJoin(organizations, eq(users.organizationId, organizations.id))
+    .where(eq(users.walletPublicKey, walletPublicKey))
+    .get()
+
+  if (!row?.organizationId) return null
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    organizationName: row.organizationName,
+    email: row.email,
+    displayName: row.displayName,
+    role: row.role as AuthedUser['role'],
+    walletPublicKey: row.walletPublicKey,
+  }
+}
+
+/**
+ * Create an organization and its first owner, in one step.
+ *
+ * The caller has already proven control of `walletPublicKey` — that proof is
+ * authentication and is deliberately not re-checked here. What this establishes is
+ * authorization: the signer becomes `owner` OF THEIR OWN new organization and of nothing
+ * else. No wallet is granted authority over an organization it did not create, and no
+ * private key is ever received or stored.
+ *
+ * `settlementRecipient` is the organization's treasury. It is validated as a Stellar
+ * account here so an unpayable address cannot be persisted, but it is NOT a credential:
+ * PageSure never signs for it, it only appears as the destination on a payment.
+ */
+export function createOrganizationWithOwner(input: {
+  walletPublicKey: string
+  displayName: string
+  organizationName: string
+  settlementRecipient: string
+  signerUrl?: string
+  signerTokenEnv?: string
+}): { organizationId: string; userId: string } {
+  const treasury = input.settlementRecipient.trim()
+  if (!StrKey.isValidEd25519PublicKey(treasury)) throw new SignupFailure('invalid_treasury')
+
+  const orgName = input.organizationName.trim()
+  if (!orgName) throw new SignupFailure('org_name_required')
+  // Bounded on the server: this row is rendered in the dashboard shell and in settlement
+  // records, so an unbounded client string would be stored verbatim and break every layout
+  // that shows it. Validation belongs here, not in the form.
+  if (orgName.length > 120) throw new SignupFailure('org_name_required')
+
+  const displayName = input.displayName.trim().slice(0, 120) || orgName
+  if (displayName.length > 120) throw new SignupFailure('org_name_required')
+
+  // Optional external signer registration, constrained by operator policy rather than by the
+  // tenant. Only validated when the operator actually offered a signer URL; without one the
+  // organization simply settles through whatever channel mode it can support.
+  let signer: { signerUrl: string; signerTokenEnv: string } | null = null
+  if (input.signerUrl?.trim() || input.signerTokenEnv?.trim()) {
+    const result = validateSignerRegistration({
+      signerUrl: input.signerUrl,
+      signerTokenEnv: input.signerTokenEnv,
+    })
+    if (!result.ok) throw new SignupFailure('invalid_signer_registration')
+    signer = { signerUrl: result.signerUrl, signerTokenEnv: result.signerTokenEnv }
   }
 
-  const id = `usr_${randomBytes(12).toString('hex')}`
-  const displayName = process.env.PROVIDER_LABEL ?? 'PageSure Provider'
-  target
-    .insert(users)
-    .values({ id, walletPublicKey, displayName, role: 'owner', createdAt: Date.now() })
-    .run()
+  if (findUserByWallet(input.walletPublicKey)) throw new SignupFailure('already_registered')
 
-  return { id, email: null, displayName, role: 'owner', walletPublicKey }
+  const organizationId = `org_${randomBytes(12).toString('hex')}`
+  const userId = `usr_${randomBytes(12).toString('hex')}`
+  const now = Date.now()
+
+  db().transaction((tx) => {
+    tx.insert(organizations)
+      .values({
+        id: organizationId,
+        name: orgName,
+        settlementRecipient: treasury,
+        commitmentSignerUrl: signer?.signerUrl ?? null,
+        commitmentSignerTokenEnv: signer?.signerTokenEnv ?? null,
+        createdAt: now,
+      })
+      .run()
+    tx.insert(users)
+      .values({
+        id: userId,
+        organizationId,
+        walletPublicKey: input.walletPublicKey,
+        displayName,
+        // First member of a brand-new organization is its owner. There is no path that
+        // makes someone owner of an organization they did not create.
+        role: 'owner',
+        createdAt: now,
+      })
+      .run()
+  })
+
+  return { organizationId, userId }
+}
+
+export class SignupFailure extends Error {
+  constructor(public readonly reason: SignupError) {
+    super(reason)
+    this.name = 'SignupFailure'
+  }
 }
 
 export function sessionCookieName(): string {

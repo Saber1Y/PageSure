@@ -2,39 +2,36 @@ import { StrKey, verify as ed25519Verify } from '@stellar/stellar-sdk'
 import { randomBytes } from 'node:crypto'
 
 /**
- * Wallet sign-in (SEP-0007 shape).
+ * Wallet sign-in (SEP-0007 shape, self-certifying).
  *
- * Why a wallet and not a password: the operator of a payment gateway already holds the
- * keypair that receives settlements. Making them protect a second secret — stored in a
- * .env file that ships with the repo, like the one this replaces — is strictly worse
- * than making them prove control of a key they already keep.
+ * Why a wallet and not a password: an operator already holds the key they would otherwise
+ * have to protect in a second secret. Making them prove control of a key they keep is
+ * strictly better than storing another credential server-side.
  *
  * The protocol:
  *
- *   server -> client   random 32 bytes, base64url, stored with an expiry
- *   client -> server   base64url signature over those bytes
- *   server             verifies against the expected public key, consumes the row
+ *   server -> client   random 32 bytes, domain-separated, stored with an expiry
+ *   client -> server   base64 signature over those bytes
+ *   server             verifies against the key the client NAMED, consumes the row
  *
- * Two properties do the real work:
+ * Three properties do the real work:
  *
- *  1. The challenge is single-use. A captured signature is worthless once the row is
- *     consumed, which is why the challenge is persisted rather than kept in memory.
+ *  1. The challenge is single-use and persisted, so a captured signature is worthless once
+ *     the row is consumed.
  *
- *  2. The EXPECTED key comes from configuration (PROVIDER_RECIPIENT_G), never from the
- *     request. A client that signs a challenge with its own freshly generated keypair
- *     and claims that key as the identity proves nothing — the signature is valid and
- *     the identity is still checked against the configured settlement wallet.
+ *  2. The challenge is bound to the claimed key and domain-separated, so it can never be
+ *     replayed as a payment authorization or as another purpose's challenge.
+ *
+ *  3. SELF-CERTIFYING. This is the important change from the previous allowlist design:
+ *     the verified key is the one the client named, not one read from configuration. That
+ *     is what lets an unknown wallet sign up without anyone provisioning it first.
+ *
+ * What that third property does NOT mean: a valid signature is AUTHENTICATION ONLY. It
+ * proves "the caller controls this key" and nothing more. It grants no access to any
+ * organization's data. Authorization is `user -> organization -> role`, enforced by
+ * requireUser(). Do not add an allowlist back here to compensate — the access decision
+ * belongs in one place, and that place is not this file.
  */
-
-/** Wallet whose control grants console access. The single source of truth. */
-export function configuredOperatorWallet(): string {
-  const key = process.env.PROVIDER_RECIPIENT_G?.trim()
-  if (!key) throw new Error('PROVIDER_RECIPIENT_G is not set')
-  if (!StrKey.isValidEd25519PublicKey(key)) {
-    throw new Error('PROVIDER_RECIPIENT_G is not a valid Stellar ed25519 public key')
-  }
-  return key
-}
 
 /** Seconds a challenge stays valid. Short, because it is single-use anyway. */
 export const CHALLENGE_TTL_MS = 5 * 60 * 1000
@@ -43,11 +40,11 @@ export const CHALLENGE_TTL_MS = 5 * 60 * 1000
  * Challenge domain separator.
  *
  * Signed bytes are prefixed so a signature captured here can never be replayed as some
- * other message that happens to use the same key — a payment authorization, for
- * instance. The version string means the scheme can be rotated later without silently
- * accepting challenges issued under the old one.
+ * other message that happens to use the same key — a payment authorization, for instance.
+ * The version string means the scheme can be rotated later without silently accepting
+ * challenges issued under the old one.
  */
-const DOMAIN = 'pagesure:console-auth:v1'
+const DOMAIN = 'pagesure:console-auth:v2'
 
 export function issueChallenge(): { challenge: string; expiresAt: number } {
   const raw = randomBytes(32)
@@ -65,14 +62,19 @@ export function challengeBytes(challenge: string): Buffer {
 
 export type SignatureCheck =
   | { ok: true; publicKey: string }
-  | { ok: false; reason: 'malformed' | 'wrong_signer' | 'not_configured' }
+  | { ok: false; reason: 'malformed' | 'wrong_signer' | 'bound_mismatch' | 'bad_claim' }
 
 /**
- * Verify a signature over a challenge.
+ * Verify a signature over a challenge against the key the client claims.
  *
- * `expectedPublicKey` is passed in by the caller from configuration, never from the
- * request body. The returned key is only ever the expected one — a valid signature from
- * the WRONG wallet is a failure, not an identity.
+ * `claimedPublicKey` arrives from the request, which is the point: this is
+ * proof-of-possession, not an allowlist check. A caller who generates a fresh keypair and
+ * names it here gets a truthful "yes, you control that key" — and nothing else. Whether
+ * that key may reach any data is decided by organization membership, not here.
+ *
+ * `boundPublicKey` is the address the challenge was issued to, when one was recorded.
+ * Enforcing it means a challenge minted for one wallet cannot be answered by another,
+ * which keeps a challenge captured in transit from being completed by whoever holds it.
  *
  * Note the StrKey.decodeEd25519PublicKey() call: the SDK's verify() wants 32 raw bytes
  * and throws on the 56-character `G...` form. Passing the string straight through is the
@@ -81,9 +83,15 @@ export type SignatureCheck =
 export function verifyChallengeSignature(
   challenge: string,
   signatureBase64url: string,
-  expectedPublicKey: string,
+  claimedPublicKey: string,
+  boundPublicKey?: string | null,
 ): SignatureCheck {
-  if (!StrKey.isValidEd25519PublicKey(expectedPublicKey)) return { ok: false, reason: 'not_configured' }
+  if (!claimedPublicKey || !StrKey.isValidEd25519PublicKey(claimedPublicKey)) {
+    return { ok: false, reason: 'bad_claim' }
+  }
+  if (boundPublicKey && boundPublicKey !== claimedPublicKey) {
+    return { ok: false, reason: 'bound_mismatch' }
+  }
 
   let signature: Buffer
   try {
@@ -97,9 +105,9 @@ export function verifyChallengeSignature(
 
   let rawKey: Buffer
   try {
-    rawKey = StrKey.decodeEd25519PublicKey(expectedPublicKey)
+    rawKey = StrKey.decodeEd25519PublicKey(claimedPublicKey)
   } catch {
-    return { ok: false, reason: 'not_configured' }
+    return { ok: false, reason: 'bad_claim' }
   }
 
   let verified = false
@@ -109,5 +117,9 @@ export function verifyChallengeSignature(
     return { ok: false, reason: 'malformed' }
   }
 
-  return verified ? { ok: true, publicKey: expectedPublicKey } : { ok: false, reason: 'wrong_signer' }
+  // Well-formed signature that simply does not belong to the claimed key. Distinct from
+  // `malformed` because the bytes were fine — the identity was not.
+  return verified
+    ? { ok: true, publicKey: claimedPublicKey }
+    : { ok: false, reason: 'wrong_signer' }
 }
