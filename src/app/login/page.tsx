@@ -1,6 +1,5 @@
-import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
-import { currentUser, sessionCookieName } from '@/lib/auth/session'
+import { currentUser, sessionUserId } from '@/lib/auth/session'
 import { Card } from '@/components/ui/primitives'
 import { LoginPanel } from '@/components/dashboard/login-form'
 import { Brand } from '@/components/ui/brand'
@@ -20,13 +19,21 @@ export default async function LoginPage({
   // for people who never see the form.
   const returnTo = safeReturnTo(typeof raw === 'string' ? raw : undefined, '')
 
-  const store = await cookies()
-  if (store.get(sessionCookieName())) redirect(returnTo || '/overview')
-
-  // currentUser() rather than a bare cookie check: the cookie alone proves nothing, and a
-  // stale or revoked cookie would otherwise bounce an authenticated visitor into a loop
-  // through a page that is pointless for them.
+  /*
+   * Three states, not two.
+   *
+   * currentUser() resolves only somebody with a tenant, so a bare cookie check used to sit in
+   * front of it - and that check is wrong for the state in between. Somebody who has proven an
+   * address and not yet joined or created an organization has a perfectly valid session and no
+   * organization, so they were redirected to /overview, bounced by the dashboard shell back to
+   * /login, and sent round again. That is the loop somebody hits after redeeming a sign-in link
+   * and then opening /login in the same browser.
+   *
+   * Asking the session who they are, rather than asking whether a cookie exists, also handles a
+   * stale or revoked cookie: it resolves to nobody and the form renders, which is correct.
+   */
   if (await currentUser()) redirect(returnTo || '/overview')
+  if (await sessionUserId()) redirect('/onboarding')
 
   return (
     <div className="flex min-h-[100dvh] items-center justify-center px-6 py-16">
