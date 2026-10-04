@@ -39,7 +39,7 @@ export function InvitePanel({ isOwner }: { isOwner: boolean }) {
               : result.failure === 'delivery_failed'
                 ? `The invitation was not sent. ${result.detail ?? ''}`.trim()
                 : result.failure === 'throttled'
-                  ? 'Too many attempts. Wait a minute and try again.'
+                  ? 'Too many invitations from this network. Try again in about 15 minutes.'
                   : 'That does not look like a valid email address.',
         )
         return

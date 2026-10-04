@@ -66,7 +66,9 @@ export function LoginPanel({
         return
       }
       if (result.failure === 'too_many_attempts') {
-        setError('Too many sign-in emails from here. Wait a minute and try again.')
+        // The window is fifteen minutes, not a minute. Saying 'a minute' sends people
+        // back to try again into the same wall.
+        setError('Too many sign-in emails from this network. Try again in about 15 minutes.')
         return
       }
       setError('That does not look like a valid email address.')
