@@ -13,6 +13,9 @@ data/*.db
 data/*.db-journal
 data/*.db-wal
 data/*.db-shm
+# backups nest one level deeper, so data/*.db does not reach them, and a backup of a live
+# database is exactly the file nobody wants committed
+data/backups/
 
 # built channel WASM (built from stellar-experimental/one-way-channel, not vendored)
 *.wasm
