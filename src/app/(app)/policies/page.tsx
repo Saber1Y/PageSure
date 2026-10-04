@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { Badge, Card, Dot, KeyValue, PageHeader, short } from '@/components/ui/primitives'
 import { policiesWithUsage } from '@/lib/policy/read-model'
 import { requireUserPage } from '@/lib/auth/session'
@@ -17,12 +18,20 @@ export default async function PoliciesPage() {
       <PageHeader
         title="Policies"
         body="A provider-defined access policy engine. Evaluation is ordered and every check is recorded, so any decision can be explained after the fact."
+        action={
+          <Link
+            href="/policies/new"
+            className="shrink-0 rounded-control bg-accent px-4 py-2 text-[13px] font-medium text-on-accent transition-colors hover:bg-accent-hover active:translate-y-px"
+          >
+            Create policy
+          </Link>
+        }
       />
 
       {rows.length === 0 ? (
         <Card>
           <div className="px-5 py-10 text-[13px] text-ink-3">
-            No policies yet. Attach a policy to a service to control who can reach it.
+            No policies yet. Creating a service makes one automatically, or create one here.
           </div>
         </Card>
       ) : (
@@ -37,11 +46,17 @@ export default async function PoliciesPage() {
                       {policy.description}
                     </p>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-3">
                     <Dot tone={policy.active ? 'allow' : 'neutral'} />
                     <Badge tone={policy.active ? 'allow' : 'neutral'}>
                       {policy.active ? 'active' : 'disabled'}
                     </Badge>
+                    <Link
+                      href={`/policies/${policy.id}`}
+                      className="rounded-control border border-line-strong px-2 py-1 text-[12px] text-ink-2 transition-colors hover:border-accent"
+                    >
+                      Configure
+                    </Link>
                   </div>
                 </div>
 

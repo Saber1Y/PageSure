@@ -23,17 +23,18 @@ available.
 6. [The throttle](#the-throttle)
 7. [Part 1 - Seed the catalogue](#part-1---seed-the-catalogue)
 8. [Part 1a - Create a service in your own organization](#part-1a---create-a-service-in-your-own-organization)
-9. [Part 2 - Call the gateway and watch the policy decide](#part-2---call-the-gateway-and-watch-the-policy-decide)
-10. [Part 3 - Hold, approve, grant, retry](#part-3---hold-approve-grant-retry)
-11. [Part 4 - Take the money](#part-4---take-the-money)
-12. [Part 5 - Channel mode](#part-5---channel-mode)
-13. [Part 6 - Read the console](#part-6---read-the-console)
-14. [Part 7 - The playground](#part-7---the-playground)
-15. [Part 8 - Console access](#part-8---console-access)
-16. [Part 9 - Wallet, settlement account, signer](#part-9---wallet-settlement-account-signer)
-17. [Part 10 - The automated suites](#part-10---the-automated-suites)
-18. [Troubleshooting](#troubleshooting)
-19. [What is not verified](#what-is-not-verified)
+9. [Part 1b - Change who can pay](#part-1b---change-who-can-pay)
+10. [Part 2 - Call the gateway and watch the policy decide](#part-2---call-the-gateway-and-watch-the-policy-decide)
+11. [Part 3 - Hold, approve, grant, retry](#part-3---hold-approve-grant-retry)
+12. [Part 4 - Take the money](#part-4---take-the-money)
+13. [Part 5 - Channel mode](#part-5---channel-mode)
+14. [Part 6 - Read the console](#part-6---read-the-console)
+15. [Part 7 - The playground](#part-7---the-playground)
+16. [Part 8 - Console access](#part-8---console-access)
+17. [Part 9 - Wallet, settlement account, signer](#part-9---wallet-settlement-account-signer)
+18. [Part 10 - The automated suites](#part-10---the-automated-suites)
+19. [Troubleshooting](#troubleshooting)
+20. [What is not verified](#what-is-not-verified)
 
 ## Before you start
 
@@ -120,10 +121,15 @@ two ways to have services, and they do not merge:
 The seed is useful for a catalogue you did not have to type, and for the channel-mode service that
 the form does not yet offer. It is not how you get a service into your own organization.
 
-There is still **no user interface for creating or editing a policy.** A policy arrives as a side
-effect of creating your first service, and after that you can read it but not change it - no
-allowlist editing, no cap changes. So you cannot yet allowlist a wallet by hand; you reach `ALLOW`
-by approving a held request, which issues a scoped, expiring grant.
+Policies can now be created and edited: caps, the unknown-wallet action, the allowlist, the
+denylist, and which services a policy covers. Part 1b walks it.
+
+So `ALLOW` is reachable two ways - allowlist a wallet for a standing relationship, or approve a
+held request for a grant scoped to one service for 24 hours.
+
+Two things remain outside the interface: **channel mode** still cannot be provisioned (Part 5), and
+there is **no way to delete a policy** - disable it instead, which refuses with a named reason
+rather than leaving services silently unbound.
 
 Everything in Parts 2 to 5 works from `curl` with no browser session at all, which is why those
 come before the console walkthroughs.
@@ -354,7 +360,8 @@ network rows the engine requires.
 That is deliberate: a service with no policy is blocked outright at check 2, so a fresh
 organization would otherwise arrive at a form whose only submit path was "no policy to bind".
 
-It is created once and reused by every later service.
+It is created once and reused by every later service. Both it and every other policy are editable
+at `/policies/<id>` - see [Part 1b](#part-1b---change-who-can-pay).
 
 ### What the form refuses, and why
 
@@ -380,9 +387,85 @@ organization, and a funded channel. All three are outside this screen, so a sess
 created here will not settle.
 See [Part 5](#part-5---channel-mode).
 
-**Policies cannot be edited.** Once `Standard Access` exists you can read it on `/policies` but
-not change a cap or allowlist a wallet. Reaching `ALLOW` therefore means approving a held request,
-which grants access scoped to one service for 24 hours.
+**Policies are edited elsewhere**, at `/policies/<id>` - see Part 1b.
+
+## Part 1b - Change who can pay
+
+A policy decides who reaches your services.
+This is where `ALLOW` comes from without waiting out a grant.
+
+Open `/policies`, then **Configure** on any policy, or **Create policy** for another one.
+
+### The settings
+
+| Field | Meaning | Left blank |
+| --- | --- | --- |
+| **A wallet you do not recognise** | `Hold it for review` (202), `Let it pay` (402), or `Refuse it` (403) | - |
+| **Per request** | over this, the request is held | no limit |
+| **Per wallet, rolling 24h** | over this in a day, held | no limit |
+| **Ungranted spend** | over this without a grant, held | no limit |
+| **Requests per minute** | over this, refused outright | no limit |
+| **Enabled** | when off, every service on it is refused | - |
+
+Caps are plain decimals in USDC and are stored in base units, so `0.05` is `500000`.
+The field shows the decimal again on reload, not the base units.
+
+Two behaviours worth knowing before you hit them:
+
+- **A cap of `0` is refused.** It does not mean free - it means "hold every request forever",
+  because every positive amount exceeds zero. Leave it blank for no limit.
+- **A cap below a service's price is allowed, but warns.** It is a legitimate way to say "review
+  everything on this service", so it is permitted - and the warning names the services it affects,
+  because the consequence is otherwise invisible until traffic arrives.
+
+### Reach ALLOW with the allowlist
+
+1. Copy the wallet address you want to allow.
+2. Paste it into **Allowlist** with any label, and click **Add**.
+3. Call one of your services with that address in `X-Pagesure-Payer`.
+
+Expect **402** with a payment challenge - not 202.
+The trace will show `allowlist: pass` and `unknown_wallet: skip`.
+
+That is the difference an allowlist makes: **202 means a person has to approve every call, 402
+means the agent can just pay.**
+
+An allowlist entry is a standing relationship.
+The alternative - approving a held request in `/review` - issues a grant scoped to **one service**
+for **24 hours**, and it expires whether or not you remember it.
+
+Remove an entry with **Remove** and the same wallet is reviewed again immediately.
+
+### Refuse a wallet outright
+
+The **Denylist** is checked at step 5, before caps, grants and the rate limit, and before any
+challenge exists - so a denylisted wallet costs you nothing to refuse.
+
+Add an address with an optional reason, which is stored and shown on the request trace.
+
+A denylisted wallet is refused even if it is also allowlisted, because the denylist is evaluated
+first. Allowlisting a wallet by mistake does not rescue it - remove the wrong entry.
+
+### Point services at this policy
+
+Tick the services this policy should cover and **Save services**.
+
+A service has exactly **one** policy.
+Moving one here takes it off whichever policy it was on, and the old policy stops listing it.
+
+Untick everything and the service is left on **no policy**, which the gateway refuses with
+`no policy attached to this service`.
+That state is deliberate and visible rather than silent - but it does mean paid calls stop working
+until you bind it somewhere.
+
+### Disabling rather than deleting
+
+There is **no delete**, and that is on purpose.
+`services.policyId` carries no foreign key, so deleting a policy that services point at would leave
+them bound to nothing - published, priced, and refusing every caller with no explanation.
+
+Turn **Enabled** off instead.
+The engine then refuses with `policy is disabled`, which names the cause.
 
 ## Part 2 - Call the gateway and watch the policy decide
 
@@ -1007,6 +1090,7 @@ They need no configuration, no wallet, and no network.
 
 | Command                    | Checks | Covers                                             |
 | -------------------------- | ------ | -------------------------------------------------- |
+| `npm run prove:policies`   | 87     | policy creation, caps, allow and deny lists        |
 | `npm run prove:services`   | 68     | service creation, slugs, prices, policy binding    |
 | `npm run prove:isolation`  | 59     | no cross-tenant reads or writes                    |
 | `npm run prove:email`      | 58     | sign-in tokens, invitations, mail delivery failure |
@@ -1016,7 +1100,7 @@ They need no configuration, no wallet, and no network.
 | `npm run prove:signer`     | 20     | signer policy and transport                        |
 | `npm run prove:commitment` | 20     | commitment construction                            |
 | `npm run prove:upgrade`    | 13     | migrating a populated older database               |
-| **Total**                  | **341**|                                                    |
+| **Total**                  | **428**|                                                    |
 
 Expect `N passed, 0 failed` from each, where `N` matches the table.
 If a count differs, the suite changed: read the diff rather than adjusting the expectation to
@@ -1072,6 +1156,19 @@ To reproduce it you need an allowlisted or granted wallet, as in
 **A retried request still returns 202.**
 The review is still `pending`.
 Approval is what changes it, and then the same URL returns 402 - see Part 3.
+
+**A request returns 403 with `policy is disabled`.**
+The policy is switched off on `/policies/<id>`.
+Every service bound to it is refused until you re-enable it - deliberate, and named, rather than
+services silently becoming unbound.
+
+**A request returns 403 with `no policy attached to this service`.**
+The service is bound to no policy.
+Open `/policies/<id>` and tick it under Services.
+
+**A wallet is allowlisted but still returns 202.**
+Check it is on the list of the policy governing *that service*, and that the trace shows
+`allowlist: pass`. An allowlist entry applies only to the policy it was added to.
 
 **A grant did not take effect.**
 Grants are scoped to `(policy, service, wallet)` and expire, 24 hours by default.
@@ -1136,10 +1233,16 @@ Stated plainly, because a test guide that overstates itself is worse than none.
   rather than by a self-referential helper. Whether Freighter's extension UI completes the flow is
   still unobserved.
 
-- **A service can be created, but a policy still cannot be edited.**
-  `/services/new` publishes a service and will create one default policy if the organization has
-  none. There is no way to change a cap, toggle a policy, or allowlist or denylist a wallet from
-  the interface. Reaching `ALLOW` depends on approving a held request.
+- **Policies can be created and edited, but not deleted.**
+  `/policies/new` and `/policies/<id>` cover caps, the unknown-wallet action, enable/disable, the
+  allowlist and denylist, and service binding. There is deliberately no delete: `services.policyId`
+  has no foreign key, so deleting a policy in use would leave its services bound to nothing and
+  refusing every caller with no explanation. Disable is the retirement path.
+
+- **The asset a policy accepts is not editable.**
+  Every policy created through the interface is registered for USDC on the current network,
+  because the engine blocks at the asset and network checks otherwise. There is no screen for
+  adding a second asset, so a policy cannot yet price in anything but USDC.
 
 - **The creation form does not create a working channel-mode service.**
   `Payment mode: Session` records the mode, but session settlement also needs a deployed channel
@@ -1152,7 +1255,8 @@ Stated plainly, because a test guide that overstates itself is worse than none.
   that the form cannot yet provision.
 
 - **The gateway, policy engine and console screens have no automated coverage.**
-  The 341 proof checks cover auth, isolation, settlement refusals, signer policy and migrations.
+  The 428 proof checks cover service and policy creation, auth, isolation, settlement refusals,
+  signer policy and migrations.
   Parts 1 to 7 were walked by hand.
 
 - **Charge mode can charge without delivering.**
