@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="PageSure">
+  <!--
+    Warm canvas and warm ink, matching --color-canvas and --color-ink in globals.css. An SVG
+    icon rather than a .ico because it stays sharp at every density and needs no binary
+    variants, and because placing it at app/icon.svg lets the App Router emit the <link
+    rel="icon"> itself instead of the browser falling back to a /favicon.ico request that
+    would 404 on every page.
+  -->
+  <rect width="32" height="32" rx="7" fill="#faf8f5" />
+  <rect x="0.5" y="0.5" width="31" height="31" rx="6.5" fill="none" stroke="#1c1917" stroke-opacity="0.12" />
+  <!-- The wordmark's two-tone split: "Page" recedes, "Sure" carries the ink. -->
+  <path
+    d="M10 23V9h3.1v5.6h4.1V9h3.1v14h-3.1v-5.5h-4.1V23H10Z"
+    fill="#5f584e"
+  />
+  <path
+    d="M22.4 23.2c1.1 0 2-.8 2-2v-1.1c0-1.1-.9-2-2-2h-2.2v-2.1h2.1c.5 0 .9-.4.9-.9v-.9c0-.5-.4-.9-.9-.9h-4.2V9h4.3c1.6 0 2.9 1.3 2.9 2.9v1.1c0 1.1-.9 2-2 2h-2.1v2.1h2.2c1.1 0 2 .9 2 2v1.1c0 1.7-1.3 3-3 3h-4v-3h4Z"
+    fill="#1c1917"
+  />
+  <!-- The cobalt accent, used once, as the period after the wordmark. -->
+  <circle cx="25.6" cy="21.4" r="2.1" fill="#2f53e0" />
+</svg>
