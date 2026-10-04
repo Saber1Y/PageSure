@@ -83,7 +83,21 @@ export function AccountChip({
   const identity = email ?? (wallet ? `${wallet.slice(0, 6)}…${wallet.slice(-4)}` : name)
 
   return (
-    <div className="relative">
+    <div className="relative flex items-center gap-2">
+      {/*
+        The organization is visible before the menu is opened, not inside it.
+
+        Somebody who has just accepted an invitation lands on a dashboard that is otherwise
+        identical to every other one: their email in the corner, a row of numbers, no sign of
+        whose data they are looking at. That is the moment the question "which organization is
+        this?" is most worth answering, and it is exactly when a closed menu answers nothing.
+      */}
+      <span
+        className="hidden max-w-[180px] truncate text-[13px] text-ink-3 sm:block"
+        title={organization}
+      >
+        {organization}
+      </span>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -96,10 +110,6 @@ export function AccountChip({
         <div className="absolute right-0 top-full z-30 mt-2 w-64 rounded-card border border-line bg-surface p-1 shadow-lg">
           <div className="px-3 py-2">
             <p className="text-[13px] font-medium text-ink">{name}</p>
-            {/* The organization is shown above the person, not below it. With more than one
-                tenant on the same browser the question is never "who am I", it is "which
-                organization am I looking at", and that must be answerable without opening a
-                menu or reading a URL. */}
             <p className="mt-1 truncate text-[12px] text-ink-2" title={organization}>
               {organization}
               <span className="ml-1 text-ink-4">· {role}</span>
