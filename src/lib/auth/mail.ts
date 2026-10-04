@@ -28,9 +28,22 @@ export interface OutboundMail {
 }
 
 export class MailDeliveryError extends Error {
-  constructor(message: string) {
+  /**
+   * Transport or provider detail, kept apart from the message on purpose.
+   *
+   * `message` is what a browser is allowed to see. `detail` is for the server log only, because
+   * a provider rejection body carries the account's own address, provider identifiers and
+   * internal error names - and this error is returned straight to the page that asked for the
+   * mail. Folding the two together is how "the mail provider rejected the message" turns into a
+   * support answer that volunteers the Resend account's email address to anyone who can submit
+   * a form.
+   */
+  readonly detail?: string
+
+  constructor(message: string, detail?: string) {
     super(message)
     this.name = 'MailDeliveryError'
+    this.detail = detail
   }
 }
 
@@ -194,11 +207,13 @@ export async function sendMail(mail: OutboundMail): Promise<void> {
     })
 
     if (!response.ok) {
-      // The provider body is included because it is the only place the reason appears, but
-      // it is not echoed to the browser: it can carry addresses and provider internals.
+      // The provider body goes to the log, not to the browser. It is the only place the real
+      // reason appears, and it is also the place the account's own address and provider
+      // internals appear, so the two are kept apart by MailDeliveryError.detail.
       const detail = await response.text().catch(() => '')
       throw new MailDeliveryError(
-        `the mail provider rejected the message (${response.status})${detail ? `: ${detail.slice(0, 200)}` : ''}`,
+        'the mail provider rejected the message',
+        `HTTP ${response.status}${detail ? `: ${detail.slice(0, 500)}` : ''}`,
       )
     }
   } catch (error) {
@@ -240,6 +255,11 @@ export async function deliverSigninLink(input: {
     })
     return { delivered: true }
   } catch (error) {
+    // The operator gets the real reason and the recipient; the browser gets neither the provider
+    // body nor the address it was addressed to.
+    if (error instanceof MailDeliveryError && error.detail) {
+      console.error(`[pagesure] sign-in mail to ${input.to} failed: ${error.detail}`)
+    }
     return {
       delivered: false,
       reason: error instanceof Error ? error.message : 'the message could not be sent',
@@ -270,6 +290,11 @@ export async function deliverInvitation(input: {
     })
     return { delivered: true }
   } catch (error) {
+    if (error instanceof MailDeliveryError && error.detail) {
+      console.error(
+        `[pagesure] invitation mail to ${input.to} for ${input.organizationName} failed: ${error.detail}`,
+      )
+    }
     return {
       delivered: false,
       reason: error instanceof Error ? error.message : 'the message could not be sent',
