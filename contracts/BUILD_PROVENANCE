@@ -1,0 +1,7 @@
+source:   https://github.com/stellar-experimental/one-way-channel
+commit:   25dea1b303495a7a4184af7605bbb7671ff08da6
+built:    2026-10-08T15:44:59Z
+rustc:    rustc 1.96.0 (ac68faa20 2026-05-25)
+target:   wasm32v1-none
+channel:  e990bef9ddb8fdac672431d1d95fc804188ef476b73a0f9a7dcd3f004387d815
+factory:  f71d8e8cb2012d097b2fb8da5ea9ea9fc06cdae3ef24485fcd225697f0fefb79
