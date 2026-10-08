@@ -38,7 +38,7 @@ export const organizations = sqliteTable(
      */
     settlementRecipient: text('settlement_recipient'),
     /**
-     * Channel commitment key for this organization, as the G... (med25519) encoding.
+     * Channel commitment key for this organization, as the M... (med25519) encoding.
      *
      * Separate from settlementRecipient on purpose, because they answer different questions.
      * `settlementRecipient` is a Stellar *account*: it receives SAC payouts and authorises

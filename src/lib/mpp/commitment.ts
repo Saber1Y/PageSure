@@ -135,7 +135,7 @@ export async function assertCommitmentBinds(
 /**
  * Verify a commitment signature against the organization's public commitment key.
  *
- * `commitmentPublicKey` is the G... (med25519) StrKey stored on the organization. Only the
+ * `commitmentPublicKey` is the M... (med25519) StrKey stored on the organization. Only the
  * public half is used, so this is safe to call with data from any source.
  */
 export function verifyCommitmentSignature(
@@ -148,7 +148,7 @@ export function verifyCommitmentSignature(
     rawKey = Buffer.from(StrKey.decodeMed25519PublicKey(commitmentPublicKey))
   } catch {
     throw new CommitmentBindingError(
-      `organization commitment key is not a G... (med25519) public key: ${commitmentPublicKey}`,
+      `organization commitment key is not an M... (med25519) public key: ${commitmentPublicKey}`,
     )
   }
   if (rawKey.length !== 32) {

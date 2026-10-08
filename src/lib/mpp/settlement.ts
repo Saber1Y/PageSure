@@ -32,7 +32,7 @@ export interface SettlementTarget {
    */
   recipient: string | null
   /**
-   * G... (med25519) commitment public key, for channel-mode services.
+   * M... (med25519) commitment public key, for channel-mode services.
    *
    * Null when the organization has not registered one. Channel open must fail rather than
    * substitute a shared key: a shared commitment key would authorize one organization to

@@ -61,7 +61,9 @@ export async function seed(): Promise<{ created: boolean; services: number }> {
     try {
       raw = Buffer.from(StrKey.decodeMed25519PublicKey(commitmentPublicKey))
     } catch {
-      throw new Error('DEMO_COMMITMENT_PUBLIC_KEY is not a G... (med25519) public key')
+      throw new Error(
+        'DEMO_COMMITMENT_PUBLIC_KEY is not an M... (med25519) public key: decodeMed25519PublicKey requires the M prefix',
+      )
     }
     if (raw.length !== 32) throw new Error('DEMO_COMMITMENT_PUBLIC_KEY must decode to 32 bytes')
   }
