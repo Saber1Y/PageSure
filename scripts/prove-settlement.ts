@@ -28,6 +28,7 @@
 import { eq } from 'drizzle-orm'
 import { existsSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { Keypair, StrKey } from '@stellar/stellar-sdk'
 
 const SCRATCH = './data/settlement-proof.db'
 
@@ -48,6 +49,7 @@ const { validateSignerRegistration, signerRegistrationAvailable } = await import
 )
 const { authenticateSignerToken, settlementIntent } = await import('../src/lib/mpp/settlement-intent')
 const { handleChannelRequest } = await import('../src/lib/sessions/gateway')
+const { createSessionRow } = await import('../src/lib/sessions/manager')
 
 process.env.CHANNEL_FACTORY_C ??= 'CDENABPOYPNPJFP2TEFO5UJFYCA7OGG6Y7TBU5XFXZ3WJJN5FKOLXN4B'
 
@@ -375,6 +377,66 @@ check('org A channel service resolves', serviceA !== null)
 check('org B channel service resolves', resolveServiceBySlug('chan-b') !== null)
 
 // ---------------------------------------------------------------------------
+// Session rows store the SDK-verifiable form of the commitment key
+// ---------------------------------------------------------------------------
+
+/*
+ * The MPP server method verifies voucher signatures with `Keypair.fromPublicKey(string)`,
+ * which only accepts an ed25519 (G...) StrKey. The organization commitment key is a
+ * med25519 (M...) StrKey over the same 32 raw bytes, so `createSessionRow` must store the
+ * ed25519 encoding of those bytes - not a hex dump, which throws `invalid version byte` on
+ * every voucher check.
+ */
+section('Session rows store the commitment key the SDK can verify')
+
+const C_WALLET = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 8)).publicKey()
+const C_TREASURY = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 9)).publicKey()
+const C_SIGNER_HOST = 'signer.c.example'
+process.env.MPP_SIGNER_HOSTS = `${process.env.MPP_SIGNER_HOSTS}, ${C_SIGNER_HOST}`
+process.env.PAGESURE_SIGNER_TOKEN_C = 'token-for-org-c-do-not-leak'
+
+const C_KEY = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 7))
+const C_MKEY = StrKey.encodeMed25519PublicKey(C_KEY.rawPublicKey())
+const c = createOrganizationWithOwner({
+  walletPublicKey: C_WALLET,
+  displayName: 'Org C Owner',
+  organizationName: 'Org C',
+  settlementRecipient: C_TREASURY,
+  signerUrl: `https://${C_SIGNER_HOST}`,
+  signerTokenEnv: 'PAGESURE_SIGNER_TOKEN_C',
+})
+db()
+  .update(schema.organizations)
+  .set({ commitmentPublicKey: C_MKEY })
+  .where(eq(schema.organizations.id, c.organizationId))
+  .run()
+
+insertChannelService('svc_c', c.organizationId, 'chan-c')
+const sessionCId = createSessionRow({
+  organizationId: c.organizationId,
+  serviceId: 'svc_c',
+  funder: PAYER,
+  assetContract: 'CA_USDC',
+  decimals: 7,
+  fundedBase: '50000000',
+  refundWaitingPeriodSeconds: 100,
+})
+const stored = db()
+  .select({ commitmentPublicKey: schema.paymentSessions.commitmentPublicKey })
+  .from(schema.paymentSessions)
+  .where(eq(schema.paymentSessions.id, sessionCId))
+  .get()?.commitmentPublicKey ?? ''
+
+check('the stored key is a valid ed25519 StrKey', StrKey.isValidEd25519PublicKey(stored))
+accepts('Keypair.fromPublicKey accepts the stored key', () => {
+  const pub = Keypair.fromPublicKey(stored).rawPublicKey()
+  const expected = Buffer.from(StrKey.decodeMed25519PublicKey(C_MKEY))
+  if (!Buffer.from(pub).equals(expected)) {
+    throw new Error('stored G-form does not encode the same raw bytes as the M-key')
+  }
+})
+
+// ---------------------------------------------------------------------------
 // Settlement intent authorization
 // ---------------------------------------------------------------------------
 
@@ -438,6 +500,27 @@ check('intent names the organization commitment key', intentA.commitmentPublicKe
 check('intent names the signer URL', intentA.signerUrl.startsWith('https://signer.a.example'))
 check('intent carries the asset code from the service', intentA.assetCode === 'USDC')
 
+const claimedStatus = db()
+  .select({ status: schema.paymentSessions.status })
+  .from(schema.paymentSessions)
+  .where(eq(schema.paymentSessions.id, 'ses_a1'))
+  .get()?.status
+check('issuing an intent claims the session (active -> settling)', claimedStatus === 'settling', String(claimedStatus))
+
+const retryIntent = settlementIntent({
+  organizationId: a.organizationId,
+  sessionId: 'ses_a1',
+  network: 'stellar:testnet',
+})
+check('a settling session can pull the intent again (retry of the same claim)', retryIntent.cumulativeBase === '1750000')
+
+const claimEvents = db()
+  .select()
+  .from(schema.sessionEvents)
+  .where(eq(schema.sessionEvents.sessionId, 'ses_a1'))
+  .all()
+check('the claim is recorded on the session timeline', claimEvents.some((e) => e.type === 'close_requested'))
+
 throws(
   "org A's valid token cannot pull org B's settlement intent",
   () => {
@@ -459,7 +542,7 @@ db()
 
 throws('a closed session cannot be settled', () => {
   settlementIntent({ organizationId: a.organizationId, sessionId: 'ses_a1', network: 'stellar:testnet' })
-}, 'only an active session')
+}, 'only an active or settling session')
 
 db()
   .update(schema.paymentSessions)
@@ -565,6 +648,24 @@ check(
   voucherResponse.status !== 400,
   `status ${voucherResponse.status}`,
 )
+
+// Once the settlement intent has claimed the session the close is imminent: a voucher served
+// after that would raise the cumulative the organization signer is about to sign against.
+db()
+  .update(schema.paymentSessions)
+  .set({ status: 'settling' })
+  .where(eq(schema.paymentSessions.id, 'ses_a1'))
+  .run()
+
+const settlingResponse = await gatewayCall({
+  action: 'voucher',
+  channel: CHANNEL_A,
+  amount: '250000',
+  signature: 'ab'.repeat(64),
+})
+check('a settling session refuses new vouchers', settlingResponse.status === 409, `status ${settlingResponse.status}`)
+const settlingBody = (await settlingResponse.json()) as { title?: string }
+check('the refusal is session_not_active', settlingBody.title === 'session_not_active', settlingBody.title)
 
 // ---------------------------------------------------------------------------
 

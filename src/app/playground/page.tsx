@@ -11,6 +11,7 @@ export default async function PlaygroundPage() {
   const user = await requireUserPage()
   const services = serviceRollups(user.organizationId).filter((s) => s.status === 'live')
   const chargeServices = services.filter((s) => s.mode === 'charge')
+  const channelServices = services.filter((s) => s.mode === 'channel')
 
   return (
     <div className="min-h-[100dvh]">
@@ -29,9 +30,10 @@ export default async function PlaygroundPage() {
             Agent playground
           </h1>
           <p className="mt-2 text-[14px] leading-relaxed text-ink-3">
-            Run a real paid request. The client signs a Soroban transfer against a funded
-            testnet account and the waterfall below is built from the SDK&apos;s own progress
-            events, not an animation.
+            Run a request as an agent would. Charge mode signs a Soroban transfer per
+            request; session mode opens an MPP channel, sends off-chain signed commitments,
+            and settles once on chain. The waterfall below is built from the SDK&apos;s own
+            progress events, not an animation.
           </p>
           <p className="mono mt-2 text-[11px] break-all text-ink-4">
             asset {USDC_SAC_TESTNET}
@@ -46,6 +48,14 @@ export default async function PlaygroundPage() {
               description: s.description,
               price: formatAmount(s.priceBase, s.decimals),
               assetCode: s.assetCode,
+            }))}
+            channelServices={channelServices.map((s) => ({
+              slug: s.slug,
+              name: s.name,
+              description: s.description,
+              price: formatAmount(s.priceBase, s.decimals),
+              assetCode: s.assetCode,
+              decimals: s.decimals,
             }))}
           />
         </div>

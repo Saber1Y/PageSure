@@ -24,6 +24,7 @@ import { db } from '@/lib/db/client'
 import { organizations, paymentSessions, services } from '@/lib/db/schema'
 import { commitmentSignerStatus } from './signer-registry'
 import { formatAmount } from '@/lib/money'
+import { addSessionEvent } from '@/lib/sessions/gateway'
 
 export class SettlementIntentUnauthorizedError extends Error {
   constructor(message: string) {
@@ -186,9 +187,9 @@ export function settlementIntent(input: {
     throw new SettlementIntentUnavailableError('no session exists with that id')
   }
 
-  if (session.status !== 'active') {
+  if (session.status !== 'active' && session.status !== 'settling') {
     throw new SettlementIntentUnavailableError(
-      `session is ${session.status}; only an active session can be settled`,
+      `session is ${session.status}; only an active or settling session can be settled`,
     )
   }
   if (!session.channelContract) {
@@ -197,6 +198,24 @@ export function settlementIntent(input: {
   if (!session.recipient) {
     throw new SettlementIntentUnavailableError(
       'this session has no recorded recipient, so a withdrawal cannot be directed',
+    )
+  }
+
+  // Claim the session for settlement the first time an intent is issued. From here on the
+  // gateway refuses new vouchers (it only serves active/opening sessions), a repeat intent is
+  // a retry of the same claim, and a session that has already closed cannot be settled again.
+  if (session.status === 'active') {
+    db()
+      .update(paymentSessions)
+      .set({ status: 'settling', updatedAt: Date.now() })
+      .where(eq(paymentSessions.id, session.id))
+      .run()
+    addSessionEvent(
+      input.organizationId,
+      session.id,
+      'close_requested',
+      'Settlement intent issued; the organization signer signs the cumulative and submits the close',
+      session.cumulativeBase,
     )
   }
 

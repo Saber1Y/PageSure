@@ -38,13 +38,21 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
 
   // The credential names the channel. Decode it to find which session this is, and whether
   // the caller is asking for service (a voucher) or for settlement (a close).
+  //
+  // A fresh client has no credential yet: it cannot sign one until it has seen the first
+  // challenge. So when no credential is presented, the caller may DECLARE the channel with
+  // `X-Pagesure-Channel` (or `?channel=`) so the session can be located and challenged. The
+  // declaration is a lookup key only - it proves nothing, exactly like the channel inside a
+  // presented credential - and mppx still verifies the commitment signature against the
+  // session's commitment key before anything is served.
   const credential = readCredential(request)
-  const channelAddress = credential.channel
+  const channelAddress = credential.channel ?? readDeclaredChannel(request, url)
   if (!channelAddress) {
     return problem(
       400,
       'channel_required',
-      'This service runs in session mode. Open a session first and present its voucher credential.',
+      'This service runs in session mode. Open a session first, then present the voucher ' +
+        'credential or declare the channel with the X-Pagesure-Channel header.',
     )
   }
 
@@ -158,7 +166,8 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
 
   // ---- Commit the voucher off-chain -------------------------------------
   const requestId = newId('req')
-  let challengeResponse: Response
+  let challengeResponse: Response | null = null
+  let verified = false
   try {
     const mppx = buildChannelMppx({
       channel: session.channelContract,
@@ -174,6 +183,8 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
     )(request)
 
     if (result.status === 402) {
+      // No credential yet (first request) or a credential mppx rejected. Pass the challenge
+      // through so the client can sign a commitment and retry; the request is NOT served.
       const challenge = result.challenge
       const headers = new Headers(challenge.headers)
       headers.set('X-Pagesure-Decision', 'allow')
@@ -181,13 +192,24 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
       headers.set('X-Pagesure-Price-Base', amountBase)
       challengeResponse = new Response(await challenge.text(), { status: 402, headers })
     } else {
-      challengeResponse = problem(400, 'unexpected_state', 'channel state could not be determined')
+      // mppx returns 200 only after the HMAC challenge binding AND the commitment signature
+      // verified against this session's commitment key, with the cumulative recorded in its
+      // store. That verification is what makes the request billable.
+      verified = true
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'voucher rejected'
     return problem(402, 'voucher_failed', message, { sessionId: session.id })
   }
-  if (challengeResponse.status === 400) return challengeResponse
+
+  // Never fall through to the upstream without a verified commitment: that would serve the
+  // request for free, and a verified commitment must never be answered with an error.
+  if (!verified) {
+    return (
+      challengeResponse ??
+      problem(400, 'unexpected_state', 'channel state could not be determined')
+    )
+  }
 
   // ---- Upstream ---------------------------------------------------------
   const requestBody = await readJsonBody(request)
@@ -331,6 +353,24 @@ type CredentialAction = 'voucher' | 'close'
 interface ParsedCredential {
   channel: string | null
   action: CredentialAction
+}
+
+/**
+ * Read the caller's declared channel when no credential has been presented yet.
+ *
+ * The first voucher request carries no `Payment` credential - the client cannot sign one
+ * before it has seen a challenge - so the session has to be located another way: the
+ * `X-Pagesure-Channel` header, or `?channel=` for clients that prefer a query parameter.
+ * Like the channel inside a presented credential, this value only SELECTS the session row;
+ * it is a claim, not proof. mppx verifies the commitment signature against the session's
+ * commitment key before any response is served, and an unknown declaration simply lands on
+ * the session_not_found path.
+ */
+function readDeclaredChannel(request: Request, url: URL): string | null {
+  const header = request.headers.get('x-pagesure-channel')?.trim()
+  if (header) return header
+  const query = url.searchParams.get('channel')?.trim()
+  return query || null
 }
 
 /**

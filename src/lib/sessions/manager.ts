@@ -191,7 +191,16 @@ export function createSessionRow(params: OpenSessionParams): string {
       recipient: settlementTargetForOrganization(params.organizationId)?.recipient ?? '',
       assetContract: params.assetContract,
       decimals: params.decimals,
-      commitmentPublicKey: requireCommitmentKeyBytes(params.organizationId).toString('hex'),
+      /*
+       * Stored as the G... (ed25519) form of the organization's commitment key, NOT the raw
+       * bytes and NOT the M... form. The MPP server method verifies client voucher
+       * signatures with `Keypair.fromPublicKey(...)`, which only accepts an ed25519 StrKey.
+       * The M... med25519 StrKey wraps the same 32-byte ed25519 public key, so encoding the
+       * decoded raw bytes back as ed25519 yields the canonical verification key. A hex dump
+       * of the raw bytes (as this column briefly held) throws `invalid version byte` on every
+       * voucher check.
+       */
+      commitmentPublicKey: StrKey.encodeEd25519PublicKey(requireCommitmentKeyBytes(params.organizationId)),
       cumulativeBase: '0',
       requestCount: 0,
       fundedBase: params.fundedBase,

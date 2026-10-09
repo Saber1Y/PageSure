@@ -30,7 +30,9 @@
     "mpp:audit": "tsx scripts/audit-mpp-api.ts",
     "contracts:build": "bash scripts/build-contracts.sh --build",
     "channels:deploy": "tsx scripts/deploy-contracts.ts",
-    "keys:generate": "tsx scripts/generate-keys.ts"
+    "keys:generate": "tsx scripts/generate-keys.ts",
+    "signer:run": "tsx scripts/signer-service.ts",
+    "e2e:session": "tsx --env-file-if-exists=.env scripts/e2e-session.ts"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^14.0.0",

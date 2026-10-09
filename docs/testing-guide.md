@@ -1095,13 +1095,13 @@ They need no configuration, no wallet, and no network.
 | `npm run prove:services`   | 68     | service creation, slugs, prices, policy binding    |
 | `npm run prove:isolation`  | 59     | no cross-tenant reads or writes                    |
 | `npm run prove:email`      | 58     | sign-in tokens, invitations, mail delivery failure |
-| `npm run prove:settlement` | 49     | settlement refusals and 501 paths                  |
+| `npm run prove:settlement` | 56     | intent claim, settlement refusals, close gate      |
 | `npm run prove:treasury`   | 31     | settlement account and signer authorization        |
 | `npm run prove:auth`       | 23     | SEP-53 conformance, challenges, signature refusal  |
 | `npm run prove:signer`     | 20     | signer policy and transport                        |
 | `npm run prove:commitment` | 20     | commitment construction                            |
 | `npm run prove:upgrade`    | 13     | migrating a populated older database               |
-| **Total**                  | **496**|                                                    |
+| **Total**                  | **503**|                                                    |
 
 Expect `N passed, 0 failed` from each, where `N` matches the table.
 If a count differs, the suite changed: read the diff rather than adjusting the expectation to
