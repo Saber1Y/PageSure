@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
 import { paymentSessions, sessionEvents } from '@/lib/db/schema'
 import type { ResolvedService } from '@/lib/services/registry'
@@ -8,7 +8,7 @@ import { buildChannelMppx, network } from '@/lib/mpp/registry'
 import { requireSettlementRecipient } from '@/lib/mpp/settlement'
 import { runUpstream, UpstreamError } from '@/lib/upstream'
 import { newId, recordIncident, recordRequest } from '@/lib/metering/record'
-import { formatAmount, toBig } from '@/lib/money'
+import { formatAmount } from '@/lib/money'
 import type { PolicyTrace } from '@/lib/policy/types'
 
 /**
@@ -18,11 +18,12 @@ import type { PolicyTrace } from '@/lib/policy/types'
  * channel is opened and is read back from chain, so:
  *
  *   - identity is AUTHORITATIVE from the first request, with no advisory phase
- *   - policy runs BEFORE anything is committed to the cumulative
- *   - a BLOCK mid-session costs the payer nothing: the cumulative simply does not
- *     advance, so the eventual on-chain settlement pays only for delivered requests
+ *   - policy runs before voucher verification, so a policy block advances nothing
+ *   - the funder's voucher is the authorization the provider can later collect; once
+ *     verified, its amount is committed even if an upstream subsequently fails
  *
- * There is no charged_not_delivered state in this path, by construction.
+ * An upstream failure after voucher verification is charged_not_delivered: the signed
+ * authorization is recorded and may be included in the later settlement.
  */
 
 interface ChannelRequestInput {
@@ -72,7 +73,7 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
       'This channel was opened against a different service.',
     )
   }
-  if (session.status !== 'active' && session.status !== 'opening') {
+  if (session.status !== 'active') {
     return problem(
       409,
       'session_not_active',
@@ -88,12 +89,9 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
   // because running it down the voucher path would price a settlement as a service request
   // and advance the cumulative for a withdrawal rather than for delivered work.
   //
-  // PageSure deliberately cannot execute the withdrawal itself. The channel contract requires
-  // `to.require_auth()`, where `to` is the organization's treasury account, and the MPP SDK
-  // submits the close with a `feePayer.envelopeSigner` holding that account's secret. Under the
-  // external-signer model PageSure stores neither the treasury secret nor the commitment key,
-  // so it has no authority to broadcast. The organization's signer service signs the withdrawal
-  // with the commitment key and submits it with its own treasury account.
+  // PageSure deliberately does not execute the withdrawal itself. The contract requires the
+  // recipient treasury account's authorization. The provider signer submits the close using
+  // that treasury key and the payer's already-authorized voucher signature.
   if (credential.action === 'close') {
     addSessionEvent(
       service.organizationId,
@@ -107,8 +105,8 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
       501,
       'settlement_not_submitted_by_pagesure',
       'This channel settles through the organization signer service, not through PageSure. ' +
-        'Fetch the authoritative cumulative from the settlement endpoint, sign it with the ' +
-        'organization commitment key, and submit the withdrawal with the organization treasury account.',
+        'Fetch the authoritative cumulative and payer voucher signature from the settlement ' +
+        'endpoint, then submit the withdrawal with the organization treasury account.',
       {
         sessionId: session.id,
         channel: channelAddress,
@@ -211,11 +209,53 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
     )
   }
 
-  // ---- Upstream ---------------------------------------------------------
-  const requestBody = await readJsonBody(request)
-  const cumulativeAfter = toBig(session.cumulativeBase) + toBig(amountBase)
+  // The MPP verifier has now accepted the payer's signature. Persist that exact signature and
+  // its cumulative before calling the upstream: settlement may use only what the payer signed,
+  // never a signature minted by the provider. A verified voucher authorizes payment even if an
+  // upstream later fails, so that case is recorded as paid-but-not-delivered below.
+  if (
+    !credential.amountBase ||
+    !credential.signature ||
+    !/^\d+$/.test(credential.amountBase) ||
+    !/^[0-9a-f]{128}$/i.test(credential.signature)
+  ) {
+    return problem(500, 'voucher_unavailable', 'verified voucher did not contain a usable payer signature', {
+      sessionId: session.id,
+    })
+  }
+  const cumulativeAfter = BigInt(credential.amountBase)
+  const advance = db().transaction((tx) => {
+    const current = tx
+      .select({ cumulativeBase: paymentSessions.cumulativeBase, fundedBase: paymentSessions.fundedBase, status: paymentSessions.status })
+      .from(paymentSessions)
+      .where(eq(paymentSessions.id, session.id))
+      .get()
+    if (!current || current.status !== 'active') return null
+    const previous = BigInt(current.cumulativeBase)
+    if (cumulativeAfter <= previous || cumulativeAfter > BigInt(current.fundedBase)) return null
+    tx.update(paymentSessions)
+      .set({
+        cumulativeBase: cumulativeAfter.toString(),
+        latestVoucherSignature: credential.signature!.toLowerCase(),
+        requestCount: sql`${paymentSessions.requestCount} + 1`,
+        updatedAt: Date.now(),
+      })
+      .where(eq(paymentSessions.id, session.id))
+      .run()
+    return (cumulativeAfter - previous).toString()
+  })
+  if (advance === null) {
+    return problem(409, 'session_not_active', 'session began settlement before this voucher could be recorded', {
+      sessionId: session.id,
+      payment: 'authorized_but_not_recorded',
+      service: 'not_executed',
+    })
+  }
+  const amountAuthorizedBase = advance
 
+  // ---- Upstream ---------------------------------------------------------
   try {
+    const requestBody = await readJsonBody(request)
     const result = await runUpstream({
       serviceId: service.id,
       serviceName: service.name,
@@ -223,6 +263,7 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
       config: service.upstreamConfig,
       search: url.searchParams,
       body: requestBody,
+      signal: request.signal,
     })
 
     const recordedId = recordRequest({
@@ -235,7 +276,7 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
       claimedPayer: session.funder,
       verifiedPayer: session.funder,
       mode: 'channel',
-      amountBase,
+      amountBase: amountAuthorizedBase,
       status: 'paid',
       policyDecision: 'allow',
       policyTrace: trace,
@@ -244,18 +285,7 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
       latencyMs: Date.now() - startedAt,
     })
 
-    db()
-      .update(paymentSessions)
-      .set({
-        cumulativeBase: cumulativeAfter.toString(),
-        requestCount: sql`${paymentSessions.requestCount} + 1`,
-        status: 'active',
-        updatedAt: Date.now(),
-      })
-      .where(eq(paymentSessions.id, session.id))
-      .run()
-
-    addSessionEvent(service.organizationId, session.id, 'request', `${service.name} request delivered`, amountBase, recordedId)
+    addSessionEvent(service.organizationId, session.id, 'request', `${service.name} request delivered`, amountAuthorizedBase, recordedId)
 
     return json(200, result.body, {
       'X-Pagesure-Decision': 'allow',
@@ -277,7 +307,7 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
       claimedPayer: session.funder,
       verifiedPayer: session.funder,
       mode: 'channel',
-      amountBase,
+      amountBase: amountAuthorizedBase,
       status: 'failed',
       policyDecision: 'allow',
       policyTrace: trace,
@@ -286,24 +316,27 @@ export async function handleChannelRequest(input: ChannelRequestInput): Promise<
     })
     recordIncident({
       organizationId: service.organizationId,
-      kind: 'upstream_failed',
+      kind: 'charged_not_delivered',
       requestId,
       sessionId: session.id,
       serviceId: service.id,
       payer: session.funder,
-      amountBase: '0',
+      amountBase: amountAuthorizedBase,
       assetCode: service.assetCode,
       decimals: service.decimals,
       reason: message,
       policyTrace: null,
       paymentTxHash: null,
     })
-    // The voucher may already be committed, but no service was delivered, so the
-    // session cumulative is left unchanged and the payer is not billed for it.
+    // The payer's voucher is already authorized and recorded. It may be included in the
+    // eventual settlement even though the upstream did not deliver; surface this explicitly.
     return problem(status, 'upstream_failed', message, {
       sessionId: session.id,
-      payment: 'not_committed',
+      payment: 'committed',
       service: 'failed',
+      amountAuthorizedBase,
+      cumulativeBase: cumulativeAfter.toString(),
+      message: 'The verified voucher authorizes this amount and it may be included in settlement.',
     })
   }
 }
@@ -353,6 +386,8 @@ type CredentialAction = 'voucher' | 'close'
 interface ParsedCredential {
   channel: string | null
   action: CredentialAction
+  amountBase: string | null
+  signature: string | null
 }
 
 /**
@@ -376,7 +411,7 @@ function readDeclaredChannel(request: Request, url: URL): string | null {
 /**
  * Read the channel address and requested action from the presented credential.
  *
- * The voucher payload is signed by the commitment key and bound to the channel, but this read
+ * The voucher payload is signed by the funder's commitment key and bound to the channel, but this read
  * is only used to LOCATE the session. The commitment itself is verified by mppx inside
  * `mppx.channel()`, which is the sole authority on whether the cumulative advanced.
  *
@@ -384,20 +419,24 @@ function readDeclaredChannel(request: Request, url: URL): string | null {
  */
 function readCredential(request: Request): ParsedCredential {
   const raw = request.headers.get('authorization') ?? request.headers.get('Payment-Authorization')
-  if (!raw) return { channel: null, action: 'voucher' }
+  if (!raw) return { channel: null, action: 'voucher', amountBase: null, signature: null }
   const match = /^Payment\s+(.+)$/i.exec(raw.trim())
-  if (!match?.[1]) return { channel: null, action: 'voucher' }
+  if (!match?.[1]) return { channel: null, action: 'voucher', amountBase: null, signature: null }
   try {
     const base64 = match[1].trim().replace(/-/g, '+').replace(/_/g, '/')
     const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
     const parsed = JSON.parse(Buffer.from(padded, 'base64').toString('utf8')) as {
       challenge?: { request?: string }
-      payload?: { channel?: string; action?: string }
+      payload?: { channel?: string; action?: string; amount?: string; signature?: string }
     }
 
     const action: CredentialAction = parsed.payload?.action === 'close' ? 'close' : 'voucher'
+    const amountBase = typeof parsed.payload?.amount === 'string' ? parsed.payload.amount : null
+    const signature = typeof parsed.payload?.signature === 'string' ? parsed.payload.signature : null
 
-    if (typeof parsed.payload?.channel === 'string') return { channel: parsed.payload.channel, action }
+    if (typeof parsed.payload?.channel === 'string') {
+      return { channel: parsed.payload.channel, action, amountBase, signature }
+    }
 
     // Fall back to decoding the challenge request blob, which carries the channel.
     const requestBlob = parsed.challenge?.request
@@ -405,11 +444,11 @@ function readCredential(request: Request): ParsedCredential {
       const b64 = requestBlob.replace(/-/g, '+').replace(/_/g, '/')
       const p = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '=')
       const decoded = JSON.parse(Buffer.from(p, 'base64').toString('utf8')) as { channel?: string }
-      if (typeof decoded.channel === 'string') return { channel: decoded.channel, action }
+      if (typeof decoded.channel === 'string') return { channel: decoded.channel, action, amountBase, signature }
     }
-    return { channel: null, action }
+    return { channel: null, action, amountBase, signature }
   } catch {
-    return { channel: null, action: 'voucher' }
+    return { channel: null, action: 'voucher', amountBase: null, signature: null }
   }
 }
 

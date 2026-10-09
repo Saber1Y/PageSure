@@ -1,0 +1,1 @@
+ALTER TABLE `payment_sessions` ADD `latest_voucher_signature` text;

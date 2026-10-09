@@ -3,7 +3,7 @@
  *
  * A channel withdrawal is authorized by a signature over bytes the contract derives. Two
  * independent things must hold: the bytes must be a commitment for this channel, this
- * amount and this network, and the signature must be by the organization's key.
+ * amount and this network, and the signature must be by the payer's key.
  *
  * This builds commitment bytes the way the contract does, then attacks them. Every check
  * below is a way the system could be tricked into releasing funds, so a pass means the gate
@@ -11,7 +11,8 @@
  *
  * Offline and deterministic: commitment bytes are assembled with the same stellar-sdk XDR
  * types the contract's `to_xdr` produces, and verified by the same SDK function the
- * settlement path uses.
+ * settlement path uses. This boundary prevents the provider treasury signer from increasing
+ * the cumulative: it has no payer secret, and changing the amount invalidates the signature.
  */
 
 import { Address, Keypair, StrKey, hash, nativeToScVal, xdr } from '@stellar/stellar-sdk'
@@ -19,7 +20,7 @@ import { Address, Keypair, StrKey, hash, nativeToScVal, xdr } from '@stellar/ste
 const {
   assertCommitmentBinds,
   verifyCommitmentSignature,
-  assertWithdrawableByOrganization,
+  assertWithdrawableByFunder,
   CommitmentBindingError,
 } = await import('../src/lib/mpp/commitment')
 
@@ -195,28 +196,28 @@ section('A malformed amount never reaches the comparison')
   check('scientific notation is rejected as base units', threw)
 }
 
-section('Signature verification only accepts the organization key')
+section('Signature verification only accepts the payer key')
 {
   const bytes = commitmentBytes()
   const org = Keypair.random()
   const other = Keypair.random()
-  const orgKey = StrKey.encodeMed25519PublicKey(org.rawPublicKey())
+  const payerKey = org.publicKey()
   const signature = org.sign(Buffer.from(bytes))
 
-  check('the organization signature verifies', verifyCommitmentSignature(bytes, signature, orgKey) === true)
+  check('the payer signature verifies', verifyCommitmentSignature(bytes, signature, payerKey) === true)
   check(
     "another key's signature is refused",
-    verifyCommitmentSignature(bytes, other.sign(Buffer.from(bytes)), orgKey) === false,
+    verifyCommitmentSignature(bytes, other.sign(Buffer.from(bytes)), payerKey) === false,
   )
 
   const flipped = Buffer.from(signature)
   flipped.writeUInt8(flipped.readUInt8(0) ^ 0xff, 0)
-  check('a single flipped signature bit is refused', verifyCommitmentSignature(bytes, flipped, orgKey) === false)
+  check('a single flipped signature bit is refused', verifyCommitmentSignature(bytes, flipped, payerKey) === false)
 
   // Signature over different bytes than the ones being presented.
   check(
     'a signature over other bytes is refused',
-    verifyCommitmentSignature(bytes, org.sign(Buffer.from(commitmentBytes({ amount: 1n }))), orgKey) === false,
+    verifyCommitmentSignature(bytes, org.sign(Buffer.from(commitmentBytes({ amount: 1n }))), payerKey) === false,
   )
 
   for (const [label, sig] of [
@@ -226,36 +227,32 @@ section('Signature verification only accepts the organization key')
   ] as const) {
     let threw = false
     try {
-      verifyCommitmentSignature(bytes, sig, orgKey)
+      verifyCommitmentSignature(bytes, sig, payerKey)
     } catch (error) {
       threw = error instanceof CommitmentBindingError
     }
     check(`${label} is rejected`, threw)
   }
 
-  let badKeyThrew = false
-  try {
-    // An ed25519 (account) key where a med25519 key is expected.
-    verifyCommitmentSignature(bytes, signature, Keypair.random().publicKey())
-  } catch (error) {
-    badKeyThrew = error instanceof CommitmentBindingError
-  }
-  check('an account key is rejected where a med25519 key is expected', badKeyThrew)
+  check(
+    'a different valid ed25519 public key cannot validate the payer signature',
+    verifyCommitmentSignature(bytes, signature, Keypair.random().publicKey()) === false,
+  )
 }
 
 section('The full gate requires binding AND signature')
 {
   const org = Keypair.random()
   const other = Keypair.random()
-  const orgKey = StrKey.encodeMed25519PublicKey(org.rawPublicKey())
+  const payerKey = org.publicKey()
   const bytes = commitmentBytes()
 
   let threw = ''
   try {
-    await assertWithdrawableByOrganization({
+    await assertWithdrawableByFunder({
       commitmentBytes: bytes,
       signature: org.sign(Buffer.from(bytes)),
-      commitmentPublicKey: orgKey,
+      commitmentPublicKey: payerKey,
       ...binding,
     })
   } catch (error) {
@@ -263,20 +260,20 @@ section('The full gate requires binding AND signature')
   }
   check('an honest withdrawal passes the gate', threw === '', threw)
 
-  // Bound to another channel AND signed by this organization. Signature valid, meaning false.
+  // Bound to another channel AND signed by this payer. Signature valid, meaning false.
   let crossChannel = ''
   try {
-    await assertWithdrawableByOrganization({
+    await assertWithdrawableByFunder({
       commitmentBytes: commitmentBytes({ channel: OTHER_CHANNEL }),
       signature: org.sign(Buffer.from(commitmentBytes({ channel: OTHER_CHANNEL }))),
-      commitmentPublicKey: orgKey,
+      commitmentPublicKey: payerKey,
       ...binding,
     })
   } catch (error) {
     crossChannel = error instanceof Error ? error.message : String(error)
   }
   check(
-    "even the organization's own signature cannot authorize another channel",
+    "even the payer's own signature cannot authorize another channel",
     crossChannel.includes('channel mismatch'),
     crossChannel,
   )
@@ -284,18 +281,18 @@ section('The full gate requires binding AND signature')
   // Right channel and amount, wrong signer.
   let wrongSigner = ''
   try {
-    await assertWithdrawableByOrganization({
+    await assertWithdrawableByFunder({
       commitmentBytes: bytes,
       signature: other.sign(Buffer.from(bytes)),
-      commitmentPublicKey: orgKey,
+      commitmentPublicKey: payerKey,
       ...binding,
     })
   } catch (error) {
     wrongSigner = error instanceof Error ? error.message : String(error)
   }
   check(
-    'a valid signature from a non-organization key does not pass',
-    wrongSigner.includes('is not by organization key'),
+    'a valid signature from a different key does not pass',
+    wrongSigner.includes('is not by funder key'),
     wrongSigner,
   )
 }

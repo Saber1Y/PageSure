@@ -29,7 +29,7 @@
  */
 
 import { eq } from 'drizzle-orm'
-import { Keypair, StrKey } from '@stellar/stellar-sdk'
+import { Keypair } from '@stellar/stellar-sdk'
 import { toBig } from '../src/lib/money'
 import { existsSync, rmSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -65,9 +65,7 @@ const manager = await import('../src/lib/sessions/manager')
 const { requireCommitmentSigner, CommitmentSignerUnavailableError } = await import('../src/lib/mpp/signer-registry')
 process.env.CHANNEL_FACTORY_C ??= 'CDENABPOYPNPJFP2TEFO5UJFYCA7OGG6Y7TBU5XFXZ3WJJN5FKOLXN4B'
 const { consumeRateLimit } = await import('../src/lib/policy/engine')
-const { requireSettlementRecipient, requireCommitmentKeyBytes } = await import(
-  '../src/lib/mpp/settlement'
-)
+const { requireSettlementRecipient } = await import('../src/lib/mpp/settlement')
 import type { PolicyTrace } from '../src/lib/policy/types'
 
 runMigrations()
@@ -538,53 +536,9 @@ check('Org A routes to its own treasury', targetA === A_TREASURY, `got ${targetA
 check('Org B routes to its own treasury', targetB === B_TREASURY, `got ${targetB}`)
 check('the two organizations settle to different accounts', targetA !== targetB)
 
-// The channel commitment key is a second, independent key. An organization with no channel
-// key must be refused rather than quietly handed a shared one: a shared key would let one
-// organization sign withdrawals from another's channel.
-db()
-  .update(schema.organizations)
-  .set({ commitmentPublicKey: null })
-  .where(eq(schema.organizations.id, a.organizationId))
-  .run()
-
-let channelRefusal = ''
-try {
-  requireCommitmentKeyBytes(a.organizationId)
-} catch (error) {
-  channelRefusal = (error as Error).message
-}
-check(
-  'channel open is refused for an organization with no commitment key',
-  channelRefusal.includes('commitment key'),
-  `got ${JSON.stringify(channelRefusal)}`,
-)
-check(
-  'charge routing still works without a channel commitment key',
-  requireSettlementRecipient(a.organizationId) === A_TREASURY,
-)
-
-// Give Org B a real key and confirm it decodes to the 32 raw bytes the factory expects.
-// A G... StrKey is 56 characters; handing it to a BytesN<32> parameter would take 56 ASCII
-// bytes instead of 32, which only fails at signature time with funds already escrowed.
-const B_COMMITMENT = Keypair.random()
-db()
-  .update(schema.organizations)
-  .set({ commitmentPublicKey: StrKey.encodeMed25519PublicKey(B_COMMITMENT.rawPublicKey()) })
-  .where(eq(schema.organizations.id, b.organizationId))
-  .run()
-
-const commitmentBytes = requireCommitmentKeyBytes(b.organizationId)
-check('commitment key decodes to exactly 32 raw bytes', commitmentBytes.length === 32, `got ${commitmentBytes.length}`)
-check(
-  'decoded commitment bytes are the raw key, not its StrKey text',
-  commitmentBytes.equals(Buffer.from(B_COMMITMENT.rawPublicKey())),
-)
-
-db()
-  .update(schema.organizations)
-  .set({ commitmentPublicKey: null })
-  .where(eq(schema.organizations.id, b.organizationId))
-  .run()
+// Session commitment keys belong to payers and are supplied per open, so treasury routing
+// has no organization commitment-key prerequisite.
+check('treasury routing needs no organization commitment key', requireSettlementRecipient(a.organizationId) === A_TREASURY)
 
 // ---------------------------------------------------------------------------
 // Policy state isolation
@@ -678,11 +632,6 @@ section('Channel open instructions are JSON-serializable')
 {
   const orgId = a.organizationId
   const A_COMMITMENT = Keypair.random()
-  db()
-    .update(schema.organizations)
-    .set({ commitmentPublicKey: StrKey.encodeMed25519PublicKey(A_COMMITMENT.rawPublicKey()) })
-    .where(eq(schema.organizations.id, orgId))
-    .run()
 
   const treasury = requireSettlementRecipient(orgId)
   const fundedBase = '1000000000000000000000000'
@@ -691,6 +640,7 @@ section('Channel open instructions are JSON-serializable')
     organizationId: orgId,
     serviceId: 'svc_a',
     funder: PAYER,
+    commitmentPublicKey: A_COMMITMENT.publicKey(),
     assetContract: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
     decimals: 7,
     fundedBase,
@@ -721,8 +671,8 @@ section('Channel open instructions are JSON-serializable')
     )
     check('the commitment key is 64 raw hex characters', round.commitmentKey.length === 64, round.commitmentKey)
     check(
-      'the commitment key is the organization key, not anything the caller passed',
-      round.commitmentKey === requireCommitmentKeyBytes(orgId).toString('hex'),
+      'the commitment key belongs to the payer that requested the open',
+      round.commitmentKey === Buffer.from(A_COMMITMENT.rawPublicKey()).toString('hex'),
     )
     check('the recipient is the organization treasury', round.to === treasury, `${round.to} vs ${treasury}`)
     check('the funder is never treated as the recipient', round.to !== PAYER && round.from === PAYER)
@@ -761,8 +711,8 @@ function containsBigInt(value: unknown): boolean {
 // Channel settlement requires a signer PageSure does not control
 // ---------------------------------------------------------------------------
 
-// A channel withdrawal is authorized by a signature from the organization's commitment key.
-// PageSure deliberately holds no channel private key, so a channel-mode organization has to
+// A channel withdrawal is authorized by the payer's commitment key. PageSure deliberately
+// holds no payer private key, so a channel-mode organization has to
 // register a signer service. These checks pin the gate: it refuses when anything is missing,
 // and it never substitutes a process-wide default, because a shared signer would let one
 // organization's settlement be signed by another's key.
@@ -781,20 +731,6 @@ section('Channel settlement requires a registered signer')
     requireSettlementRecipient(orgId) === treasuryRow?.r,
   )
 
-  // An earlier section gave org A a commitment key, so clear it first. Otherwise this checks
-  // the signer branch while believing it is checking the missing-key branch.
-  const clearKey = () =>
-    db()
-      .update(schema.organizations)
-      .set({ commitmentPublicKey: null })
-      .where(eq(schema.organizations.id, orgId))
-      .run()
-  const withKey = () =>
-    db()
-      .update(schema.organizations)
-      .set({ commitmentPublicKey: StrKey.encodeMed25519PublicKey(Keypair.random().rawPublicKey()) })
-      .where(eq(schema.organizations.id, orgId))
-      .run()
   const setSigner = (url: string | null, tokenEnv: string | null) =>
     db()
       .update(schema.organizations)
@@ -802,8 +738,7 @@ section('Channel settlement requires a registered signer')
       .where(eq(schema.organizations.id, orgId))
       .run()
 
-  // No commitment key at all.
-  clearKey()
+  // The provider signer is independent of the payer's per-channel key.
   setSigner(null, null)
   let reason = ''
   try {
@@ -811,16 +746,7 @@ section('Channel settlement requires a registered signer')
   } catch (error) {
     reason = error instanceof CommitmentSignerUnavailableError ? error.message : 'threw something else'
   }
-  check('an organization with no commitment key has no signer', reason.includes('no channel commitment key'), reason)
-
-  withKey()
-  reason = ''
-  try {
-    requireCommitmentSigner(orgId)
-  } catch (error) {
-    reason = error instanceof CommitmentSignerUnavailableError ? error.message : 'threw something else'
-  }
-  check('a commitment key with no signer service is still refused', reason.includes('no channel signer service'), reason)
+  check('an organization with no signer service is refused', reason.includes('no channel signer service'), reason)
 
   setSigner('https://signer.example/sign', null)
   reason = ''
@@ -858,18 +784,9 @@ section('Channel settlement requires a registered signer')
   }
   check('a fully registered signer resolves', signer !== null, signerError)
   check('the resolved signer carries the organization token', signer?.token === 'test-token')
-  const keyRow = db()
-    .select({ k: schema.organizations.commitmentPublicKey })
-    .from(schema.organizations)
-    .where(eq(schema.organizations.id, orgId))
-    .get()
-  check(
-    'the resolved signer carries the organization commitment key',
-    signer?.commitmentPublicKey === keyRow?.k && signer?.commitmentPublicKey !== undefined,
-  )
+  check('the resolved signer has no payer commitment key', signer !== null && !('commitmentPublicKey' in signer))
 
   // Org B must not be able to borrow Org A's signer.
-  clearKey()
   setSigner(null, null)
   let crossed = ''
   try {

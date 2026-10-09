@@ -127,7 +127,7 @@ export default async function ServiceDetailPage({ params }: { params: Promise<{ 
             <div>
               <span className="label-xs">Session mode</span>
               <p className="mt-2 text-[13px] leading-relaxed text-ink-3">
-                For repeated calls, open a session instead. The payer deploys a channel
+                For repeated calls, open a session instead. The payer provides its voucher public key and deploys a channel
                 instance through the factory and signs the invoke, so funds never sit in an
                 account PageSure controls. PageSure verifies the channel against chain,
                 then each request signs a cumulative commitment off-chain. Closing the

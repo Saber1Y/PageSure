@@ -3,6 +3,7 @@ import { resolveServiceBySlug } from '@/lib/services/registry'
 import { evaluatePreflight } from '@/lib/policy/service'
 import { network } from '@/lib/mpp/registry'
 import { requireSettlementRecipient } from '@/lib/mpp/settlement'
+import { commitmentSignerStatus } from '@/lib/mpp/signer-registry'
 import { channelOpenInstructions, createSessionRow } from '@/lib/sessions/manager'
 import { recordActivity } from '@/lib/metering/record'
 import { formatAmount } from '@/lib/money'
@@ -25,6 +26,7 @@ export const dynamic = 'force-dynamic'
 
 interface OpenBody {
   funder?: string
+  commitmentPublicKey?: string
   fundedBase?: string
   refundWaitingPeriodSeconds?: number
 }
@@ -47,6 +49,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ slug: stri
   const funder = body.funder?.trim() ?? ''
   if (!funder || !StrKey.isValidEd25519PublicKey(funder)) {
     return problem(400, 'invalid_funder', 'funder must be a valid Stellar account')
+  }
+
+  const commitmentPublicKey = body.commitmentPublicKey?.trim() ?? ''
+  if (!StrKey.isValidEd25519PublicKey(commitmentPublicKey)) {
+    return problem(400, 'invalid_commitment_key', 'commitmentPublicKey must be the funder’s valid G... ed25519 public key')
   }
 
   const fundedBase = body.fundedBase?.trim() || '0'
@@ -82,12 +89,25 @@ export async function POST(request: Request, ctx: { params: Promise<{ slug: stri
     })
   }
 
+  const signerStatus = commitmentSignerStatus(service.organizationId)
+  if (!signerStatus.ready) {
+    return problem(503, 'session_signer_unavailable', signerStatus.reason)
+  }
+
+  let recipient: string
+  try {
+    recipient = requireSettlementRecipient(service.organizationId)
+  } catch (error) {
+    return problem(503, 'settlement_unavailable', (error as Error).message)
+  }
+
   let instructions
   try {
     instructions = channelOpenInstructions({
       organizationId: service.organizationId,
       serviceId: service.id,
       funder,
+      commitmentPublicKey,
       assetContract: service.assetContract,
       decimals: service.decimals,
       fundedBase,
@@ -101,6 +121,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ slug: stri
     organizationId: service.organizationId,
     serviceId: service.id,
     funder,
+    commitmentPublicKey,
     assetContract: service.assetContract,
     decimals: service.decimals,
     fundedBase,
@@ -125,7 +146,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ slug: stri
     pricePerRequestBase: service.priceBase,
     pricePerRequest: formatAmount(service.priceBase, service.decimals),
     asset: { code: service.assetCode, contract: service.assetContract, decimals: service.decimals },
-    recipient: requireSettlementRecipient(service.organizationId),
+    recipient,
     open: instructions,
     next:
       `Submit the factory open invoke with your own key, then POST /v1/${slug}/session/confirm ` +

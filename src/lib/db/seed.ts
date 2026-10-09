@@ -52,22 +52,6 @@ export async function seed(): Promise<{ created: boolean; services: number }> {
     throw new Error('DEMO_SETTLEMENT_RECIPIENT is not a valid Stellar account')
   }
 
-  // The channel commitment key is optional: charge-mode services settle without one. It is
-  // validated up front so a malformed value fails the seed loudly rather than leaving a
-  // demo organization that cannot open channels for reasons nobody can see.
-  const commitmentPublicKey = process.env.DEMO_COMMITMENT_PUBLIC_KEY?.trim() || null
-  if (commitmentPublicKey) {
-    let raw: Buffer
-    try {
-      raw = Buffer.from(StrKey.decodeMed25519PublicKey(commitmentPublicKey))
-    } catch {
-      throw new Error(
-        'DEMO_COMMITMENT_PUBLIC_KEY is not an M... (med25519) public key: decodeMed25519PublicKey requires the M prefix',
-      )
-    }
-    if (raw.length !== 32) throw new Error('DEMO_COMMITMENT_PUBLIC_KEY must decode to 32 bytes')
-  }
-
   // ---- organization -------------------------------------------------------
   const existingOrg = target.select().from(organizations).where(eq(organizations.id, DEMO_ORG_ID)).get()
   if (!existingOrg) {
@@ -77,19 +61,10 @@ export async function seed(): Promise<{ created: boolean; services: number }> {
         id: DEMO_ORG_ID,
         name: 'PageSure Demo',
         settlementRecipient: treasury,
-        commitmentPublicKey,
         createdAt: Date.now(),
       })
       .run()
     console.log('created demo organization')
-  } else if (commitmentPublicKey && !existingOrg.commitmentPublicKey) {
-    // Backfill rather than insert: re-running the seed must not fail on the existing row.
-    target
-      .update(organizations)
-      .set({ commitmentPublicKey })
-      .where(eq(organizations.id, DEMO_ORG_ID))
-      .run()
-    console.log('backfilled demo commitment key')
   }
 
   // ---- owner --------------------------------------------------------------

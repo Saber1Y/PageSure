@@ -25,7 +25,7 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
   const outcome = (() => {
     switch (request.status) {
       case 'paid':
-        return { payment: 'settled', service: 'delivered' }
+        return { payment: request.mode === 'channel' ? 'committed' : 'settled', service: 'delivered' }
       case 'challenged':
         return { payment: 'not_started', service: 'not_executed' }
       case 'blocked':
@@ -34,9 +34,9 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
         return { payment: 'not_started', service: 'not_executed' }
       case 'rejected_mismatch':
       case 'charged_not_delivered':
-        return { payment: 'settled', service: 'not_executed' }
+        return { payment: request.mode === 'channel' ? 'committed' : 'settled', service: 'not_executed' }
       case 'failed':
-        return { payment: 'settled', service: 'failed' }
+        return { payment: request.mode === 'channel' ? 'committed' : 'settled', service: 'failed' }
       default:
         return { payment: 'not_started', service: 'not_executed' }
     }
@@ -69,6 +69,16 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
           />
         </div>
       </Card>
+
+      {request.mode === 'channel' && (request.status === 'failed' || request.status === 'charged_not_delivered') ? (
+        <Card>
+          <div className="border-l-2 border-review px-5 py-4 text-[13px] leading-relaxed text-ink-2">
+            The payer&apos;s verified voucher authorizes this amount. It has not settled on chain yet,
+            but it may be collected when the channel closes. Contact the payer and resolve the
+            undelivered request before settlement.
+          </div>
+        </Card>
+      ) : null}
 
       <Card>
         <div className="px-5 py-4">

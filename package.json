@@ -32,7 +32,10 @@
     "channels:deploy": "tsx scripts/deploy-contracts.ts",
     "keys:generate": "tsx scripts/generate-keys.ts",
     "signer:run": "tsx scripts/signer-service.ts",
-    "e2e:session": "tsx --env-file-if-exists=.env scripts/e2e-session.ts"
+    "e2e:session": "tsx --env-file-if-exists=.env scripts/e2e-session.ts",
+    "e2e:charge": "tsx --env-file-if-exists=.env scripts/e2e-charge.ts",
+    "readiness": "tsx --env-file-if-exists=.env scripts/readiness.ts",
+    "prove:upstream": "tsx scripts/prove-upstream.ts"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^14.0.0",

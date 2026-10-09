@@ -1,7 +1,7 @@
 /**
  * Commitment binding and signature verification for one-way channels.
  *
- * A channel withdrawal is authorized by an ed25519 signature, by the organization's
+ * A channel withdrawal is authorized by an ed25519 signature, by the funder's
  * commitment key, over bytes the contract defines. Two things must therefore be true before
  * a settlement proceeds, and they are checked separately here:
  *
@@ -9,13 +9,13 @@
  *      network, under the `chancmmt` domain. Commitment bytes come from simulating
  *      `prepare_commitment`, which is unauthenticated and callable by anyone, so the bytes are
  *      untrusted input until decoded and compared against what we intended to authorize.
- *   2. The signature over those bytes really came from the organization's key.
+ *   2. The signature over those bytes really came from the funder's key.
  *
  * The order matters. Verifying the signature first proves only that *someone* signed
  * *something*; binding is what makes it mean "this much, from this channel".
  *
  * This module never sees a private key. It verifies; it cannot sign. Producing the signature
- * is the organization's signer service's job, which is why nothing here can be coerced into
+ * is the payer's job, which is why nothing here can be coerced into
  * moving funds.
  *
  * Note on the SDK: `@stellar/mpp` has an `assertCommitmentBinds`, but it is not reachable
@@ -133,10 +133,10 @@ export async function assertCommitmentBinds(
 }
 
 /**
- * Verify a commitment signature against the organization's public commitment key.
+ * Verify a commitment signature against the funder's public commitment key.
  *
- * `commitmentPublicKey` is the M... (med25519) StrKey stored on the organization. Only the
- * public half is used, so this is safe to call with data from any source.
+ * Accepts the funder's G... ed25519 key (stored on the session) or the legacy M... encoding.
+ * Only the public half is used, so this is safe to call with data from any source.
  */
 export function verifyCommitmentSignature(
   commitmentBytes: Uint8Array,
@@ -145,10 +145,14 @@ export function verifyCommitmentSignature(
 ): boolean {
   let rawKey: Buffer
   try {
-    rawKey = Buffer.from(StrKey.decodeMed25519PublicKey(commitmentPublicKey))
+    rawKey = Buffer.from(
+      StrKey.isValidEd25519PublicKey(commitmentPublicKey)
+        ? StrKey.decodeEd25519PublicKey(commitmentPublicKey)
+        : StrKey.decodeMed25519PublicKey(commitmentPublicKey),
+    )
   } catch {
     throw new CommitmentBindingError(
-      `organization commitment key is not an M... (med25519) public key: ${commitmentPublicKey}`,
+      `commitment key is not a valid G... (ed25519) or M... (med25519) public key: ${commitmentPublicKey}`,
     )
   }
   if (rawKey.length !== 32) {
@@ -172,11 +176,11 @@ export function verifyCommitmentSignature(
 /**
  * Full gate for a withdrawal: binding first, then signature.
  *
- * Resolves only when the signature is by the organization's key over a commitment for the
+ * Resolves only when the signature is by the funder's key over a commitment for the
  * requested channel, amount and network. Every failure throws, so a caller cannot accidentally
  * read a `false` as "proceed anyway".
  */
-export async function assertWithdrawableByOrganization(
+export async function assertWithdrawableByFunder(
   args: {
     commitmentBytes: Uint8Array
     signature: Uint8Array
@@ -186,7 +190,7 @@ export async function assertWithdrawableByOrganization(
   await assertCommitmentBinds(args.commitmentBytes, args)
   if (!verifyCommitmentSignature(args.commitmentBytes, args.signature, args.commitmentPublicKey)) {
     throw new CommitmentBindingError(
-      `commitment signature is not by organization key ${args.commitmentPublicKey} ` +
+      `commitment signature is not by funder key ${args.commitmentPublicKey} ` +
         `for channel ${args.channel} at ${args.amountBase}`,
     )
   }

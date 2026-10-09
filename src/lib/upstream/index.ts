@@ -51,6 +51,8 @@ export interface UpstreamContext {
   search: URLSearchParams
   /** POST body when the client sent one. */
   body: unknown
+  /** Incoming request cancellation, combined with the configured upstream deadline. */
+  signal?: AbortSignal
 }
 
 export class UpstreamError extends Error {
@@ -122,7 +124,7 @@ const searchProviders = {
     url.searchParams.set('count', String(ctx.search.get('count') ?? '5'))
 
     const payload = (await readJson(
-      await fetch(url, { headers: { 'X-Subscription-Token': key, Accept: 'application/json' } }),
+      await fetch(url, { headers: { 'X-Subscription-Token': key, Accept: 'application/json' }, signal: ctx.signal }),
       provider,
     )) as { web?: { results?: Array<{ title?: string; url?: string; description?: string }> } }
 
@@ -145,6 +147,7 @@ const searchProviders = {
     const payload = (await readJson(
       await fetch('https://api.tavily.com/search', {
         method: 'POST',
+        signal: ctx.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           api_key: key,
@@ -175,6 +178,7 @@ const searchProviders = {
     const payload = (await readJson(
       await fetch('https://api.exa.ai/search', {
         method: 'POST',
+        signal: ctx.signal,
         headers: { 'Content-Type': 'application/json', 'x-api-key': key },
         body: JSON.stringify({ query: q, numResults: Number(ctx.search.get('count') ?? '5') }),
       }),
@@ -200,6 +204,9 @@ export async function runSearch(ctx: UpstreamContext): Promise<SearchResponse> {
     try {
       return await searchProviders[name](ctx)
     } catch (error) {
+      if (ctx.signal?.aborted) {
+        throw new UpstreamError('search', 'Upstream request timed out or was cancelled', 504)
+      }
       // A 4xx/5xx from a configured provider is a real outage for that provider;
       // trying the next is correct. A missing key is not an outage, it is a config
       // error, and we keep it visible in the aggregated message.
@@ -245,7 +252,7 @@ const marketProviders = {
     const headers: Record<string, string> = { Accept: 'application/json' }
     if (key) headers['x-cg-demo-api-key'] = key
 
-    const payload = (await readJson(await fetch(url, { headers }), provider)) as Record<
+    const payload = (await readJson(await fetch(url, { headers, signal: ctx.signal }), provider)) as Record<
       string,
       Record<string, number>
     >
@@ -276,6 +283,7 @@ export async function runMarket(ctx: UpstreamContext): Promise<MarketResponse> {
   try {
     return await marketProviders.coingecko(ctx)
   } catch (error) {
+    if (ctx.signal?.aborted) throw new UpstreamError('market', 'Upstream request timed out or was cancelled', 504)
     throw new UpstreamError('market', (error as Error).message, 503)
   }
 }
@@ -297,23 +305,30 @@ export async function runSummary(ctx: UpstreamContext): Promise<SummaryResponse>
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (key) headers.Authorization = `Bearer ${key}`
 
-  const payload = (await readJson(
-    await fetch(`${base.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model,
-        messages: [
-          {
-            role: 'system',
-            content: 'Summarise the supplied text accurately and concisely. No preamble.',
-          },
-          { role: 'user', content: text },
-        ],
+  let payload: { choices?: Array<{ message?: { content?: string } }> }
+  try {
+    payload = (await readJson(
+      await fetch(`${base.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        signal: ctx.signal,
+        headers,
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: 'system',
+              content: 'Summarise the supplied text accurately and concisely. No preamble.',
+            },
+            { role: 'user', content: text },
+          ],
+        }),
       }),
-    }),
-    provider,
-  )) as { choices?: Array<{ message?: { content?: string } }> }
+      provider,
+    )) as { choices?: Array<{ message?: { content?: string } }> }
+  } catch (error) {
+    if (ctx.signal?.aborted) throw new UpstreamError(provider, 'Upstream request timed out or was cancelled', 504)
+    throw error
+  }
 
   return {
     provider,
@@ -327,23 +342,33 @@ export async function runUpstream(ctx: UpstreamContext): Promise<{
   status: number
   body: unknown
 }> {
+  const configuredTimeout = Number.parseInt(process.env.PAGESURE_UPSTREAM_TIMEOUT_MS ?? '15000', 10)
+  const timeoutMs = Number.isFinite(configuredTimeout)
+    ? Math.min(60_000, Math.max(100, configuredTimeout))
+    : 15_000
+  const deadline = AbortSignal.timeout(timeoutMs)
+  const upstreamContext = {
+    ...ctx,
+    signal: ctx.signal ? AbortSignal.any([ctx.signal, deadline]) : deadline,
+  }
+
   // Test-only substitution point. Unset in production, and settable only by scripts/prove-charge,
   // so the gateway's paid path can be proven without reaching a real provider. See
   // lib/testing/overrides.
   const override = upstreamRunnerOverride()
-  if (override) return override(ctx)
+  if (override) return override(upstreamContext)
 
   switch (ctx.upstreamKind) {
     case 'search': {
-      const result = await runSearch(ctx)
+      const result = await runSearch(upstreamContext)
       return { provider: result.provider, status: 200, body: result }
     }
     case 'market': {
-      const result = await runMarket(ctx)
+      const result = await runMarket(upstreamContext)
       return { provider: result.provider, status: 200, body: result }
     }
     case 'summarize': {
-      const result = await runSummary(ctx)
+      const result = await runSummary(upstreamContext)
       return { provider: result.provider, status: 200, body: result }
     }
     default:

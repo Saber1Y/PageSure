@@ -91,7 +91,7 @@ export function PolicyTraceView({
           className={`flex flex-col gap-1.5 rounded-card px-4 py-3 ${
             payment === 'not_started'
               ? 'bg-allow-soft'
-              : payment === 'not_committed'
+              : payment === 'not_committed' || payment === 'committed'
                 ? 'bg-review-soft'
                 : 'bg-block-soft'
           }`}
@@ -101,7 +101,7 @@ export function PolicyTraceView({
               className={`text-[13px] font-medium ${
                 payment === 'not_started'
                   ? 'text-allow'
-                  : payment === 'not_committed'
+                  : payment === 'not_committed' || payment === 'committed'
                     ? 'text-review'
                     : 'text-block'
               }`}
@@ -134,6 +134,8 @@ function humanise(value: string): string {
       return 'NOT STARTED'
     case 'not_committed':
       return 'NOT COMMITTED TO THE CHANNEL'
+    case 'committed':
+      return 'PAYER AUTHORIZED; MAY BE COLLECTED AT CLOSE'
     case 'settled':
       return 'SETTLED ON CHAIN'
     case 'not_executed':

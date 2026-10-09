@@ -1,5 +1,6 @@
-import { StrKey } from '@stellar/stellar-sdk'
+import { Address, StrKey, rpc, xdr } from '@stellar/stellar-sdk'
 import { getChannelState } from '@stellar/mpp/channel/server'
+import { SOROBAN_RPC_URLS } from '@stellar/mpp'
 import { db } from '@/lib/db/client'
 import { paymentSessions } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
@@ -7,7 +8,7 @@ import { network, rpcUrl } from '@/lib/mpp/registry'
 import { toBig } from '@/lib/money'
 import { newId } from '@/lib/metering/record'
 import { nextSessionRef } from './lookup'
-import { requireCommitmentKeyBytes, settlementTargetForOrganization } from '@/lib/mpp/settlement'
+import { settlementTargetForOrganization } from '@/lib/mpp/settlement'
 import { addSessionEvent } from './gateway'
 
 /**
@@ -32,6 +33,7 @@ export interface OpenSessionParams {
   organizationId: string
   serviceId: string
   funder: string
+  commitmentPublicKey: string
   assetContract: string
   decimals: number
   fundedBase: string
@@ -60,22 +62,10 @@ export function channelOpenInstructions(params: OpenSessionParams) {
     salt: newSalt(),
     token: params.assetContract,
     from: params.funder,
-    /*
-     * The organization's own commitment key, never the payer's.
-     *
-     * This was previously read straight out of the request body, which inverts the contract's
-     * authorization model: `settle` and `close` check `ed25519_verify(commitment_key, ...)` to
-     * authorise the recipient to withdraw. Handing that key to the payer means the payer holds
-     * the private half of the key that authorises withdrawal from its own channel. It is not
-     * directly exploitable today only because `to.require_auth()` also runs, so this stayed
-     * invisible — while PageSure itself could never produce a valid commitment, making the
-     * settlement path non-functional. Both halves now come from the organization.
-     *
-     * Raw bytes, because the factory takes BytesN<32>. The G... StrKey is 56 characters and
-     * would decode to the wrong 32 bytes, failing only at settlement time with funds already
-     * escrowed.
-     */
-    commitmentKey: requireCommitmentKeyBytes(params.organizationId).toString('hex'),
+    // The funder owns this key and signs each voucher. The provider receives signatures,
+    // not the private key; it can collect only an amount the funder authorized.
+    // The factory takes raw BytesN<32>, not the G... StrKey encoding.
+    commitmentKey: Buffer.from(StrKey.decodeEd25519PublicKey(params.commitmentPublicKey)).toString('hex'),
     to: settlement.recipient,
     /*
      * A string, not the BigInt `toBig` returns.
@@ -142,6 +132,18 @@ export async function confirmSession(input: {
   if (state.token !== input.expected.assetContract) {
     return { ok: false, reason: `channel token is ${state.token}, expected ${input.expected.assetContract}` }
   }
+  let commitmentPublicKeyG: string
+  try {
+    commitmentPublicKeyG = await readCommitmentPublicKey(input.channelContract)
+  } catch (error) {
+    return { ok: false, reason: `could not read channel commitment key: ${(error as Error).message}` }
+  }
+  if (commitmentPublicKeyG !== input.expected.commitmentPublicKeyG) {
+    return {
+      ok: false,
+      reason: `channel commitment key is ${commitmentPublicKeyG}, expected ${input.expected.commitmentPublicKeyG}`,
+    }
+  }
   if (state.closeEffectiveAtLedger !== null) {
     return { ok: false, reason: 'channel is already closing' }
   }
@@ -171,6 +173,40 @@ export async function confirmSession(input: {
   return { ok: true, balanceBase: state.balance.toString() }
 }
 
+/** Read the immutable CommitmentKey from the contract's instance storage. */
+async function readCommitmentPublicKey(channelContract: string): Promise<string> {
+  const url = rpcUrl() ?? SOROBAN_RPC_URLS[network()]
+  const server = new rpc.Server(url)
+  const contractId = Address.fromString(channelContract)
+  const instanceKey = xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: contractId.toScAddress(),
+      key: xdr.ScVal.scvLedgerKeyContractInstance(),
+      durability: xdr.ContractDataDurability.persistent(),
+    }),
+  )
+  const response = await server.getLedgerEntries(instanceKey)
+  const entry = response.entries?.[0]
+  const storage = entry?.val.contractData()?.val()?.instance()?.storage()
+  if (!storage) throw new Error('contract instance storage is missing')
+
+  for (const item of storage) {
+    const key = item.key()
+    const keyVector = key.vec()
+    if (
+      key.switch().value === xdr.ScValType.scvVec().value &&
+      keyVector?.length === 1 &&
+      keyVector[0]?.switch().value === xdr.ScValType.scvSymbol().value &&
+      keyVector[0]?.sym()?.toString() === 'CommitmentKey'
+    ) {
+      const rawKey = item.val().bytes()
+      if (rawKey.length !== 32) throw new Error(`stored key is ${rawKey.length} bytes, expected 32`)
+      return StrKey.encodeEd25519PublicKey(Buffer.from(rawKey))
+    }
+  }
+  throw new Error('CommitmentKey is not present in contract instance storage')
+}
+
 /** Reserve a session row before the payer has deployed anything. */
 export function createSessionRow(params: OpenSessionParams): string {
   const id = newId('ses')
@@ -191,16 +227,8 @@ export function createSessionRow(params: OpenSessionParams): string {
       recipient: settlementTargetForOrganization(params.organizationId)?.recipient ?? '',
       assetContract: params.assetContract,
       decimals: params.decimals,
-      /*
-       * Stored as the G... (ed25519) form of the organization's commitment key, NOT the raw
-       * bytes and NOT the M... form. The MPP server method verifies client voucher
-       * signatures with `Keypair.fromPublicKey(...)`, which only accepts an ed25519 StrKey.
-       * The M... med25519 StrKey wraps the same 32-byte ed25519 public key, so encoding the
-       * decoded raw bytes back as ed25519 yields the canonical verification key. A hex dump
-       * of the raw bytes (as this column briefly held) throws `invalid version byte` on every
-       * voucher check.
-       */
-      commitmentPublicKey: StrKey.encodeEd25519PublicKey(requireCommitmentKeyBytes(params.organizationId)),
+      // Retain the funder's G... key used by the MPP server to verify vouchers.
+      commitmentPublicKey: params.commitmentPublicKey,
       cumulativeBase: '0',
       requestCount: 0,
       fundedBase: params.fundedBase,

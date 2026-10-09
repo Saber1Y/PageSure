@@ -1,11 +1,9 @@
 /**
  * Settlement intents: what an organization's signer service is told to sign.
  *
- * PageSure cannot submit the withdrawal itself. The channel contract requires
- * `to.require_auth()` against the organization's treasury account, and the MPP SDK broadcasts
- * the close using a `feePayer.envelopeSigner` that holds that account's secret. Under the
- * external-signer model PageSure stores neither the treasury secret nor the commitment key,
- * so settlement is necessarily driven by the signer.
+ * PageSure cannot submit the withdrawal itself. The close needs the payer's commitment
+ * signature and authorization from the organization's treasury account. PageSure stores the
+ * payer's public key and already-authorized voucher signature, never either private key.
  *
  * That makes this endpoint the trust boundary in the other direction. The signer needs the
  * authoritative cumulative before it signs anything, and this is where it gets it. Two rules
@@ -14,8 +12,8 @@
  *   - the caller must present the organization's own signer token, compared in constant time
  *   - the amount is PageSure's own recorded cumulative, never a value supplied by the caller
  *
- * The signer signs a binding commitment over the value returned here; it cannot choose a
- * different one, and PageSure re-verifies the binding before anything is accepted.
+ * The signer must submit the exact payer-signed commitment returned here; it cannot mint a
+ * signature for a different amount. PageSure verifies the completed transfer from chain.
  */
 
 import { timingSafeEqual } from 'node:crypto'
@@ -109,6 +107,8 @@ export interface SettlementIntent {
   /** The same cumulative formatted for the asset, which is what the contract expects. */
   cumulativeFormatted: string
   requestCount: number
+  /** Latest accepted voucher signature, authorized by the funder for this exact cumulative. */
+  commitmentSignature: string
   commitmentPublicKey: string
   signerUrl: string
   network: string
@@ -126,6 +126,8 @@ interface SessionForSettlement {
   decimals: number
   cumulativeBase: string
   requestCount: number
+  commitmentPublicKey: string
+  latestVoucherSignature: string | null
   status: string
 }
 
@@ -169,6 +171,8 @@ export function settlementIntent(input: {
       decimals: paymentSessions.decimals,
       cumulativeBase: paymentSessions.cumulativeBase,
       requestCount: paymentSessions.requestCount,
+      commitmentPublicKey: paymentSessions.commitmentPublicKey,
+      latestVoucherSignature: paymentSessions.latestVoucherSignature,
       status: paymentSessions.status,
     })
     .from(paymentSessions)
@@ -200,6 +204,9 @@ export function settlementIntent(input: {
       'this session has no recorded recipient, so a withdrawal cannot be directed',
     )
   }
+  if (session.cumulativeBase === '0' || !session.latestVoucherSignature) {
+    throw new SettlementIntentUnavailableError('this session has no payer-authorized voucher to settle')
+  }
 
   // Claim the session for settlement the first time an intent is issued. From here on the
   // gateway refuses new vouchers (it only serves active/opening sessions), a repeat intent is
@@ -230,7 +237,8 @@ export function settlementIntent(input: {
     cumulativeBase: session.cumulativeBase,
     cumulativeFormatted: formatAmount(session.cumulativeBase, session.decimals),
     requestCount: session.requestCount,
-    commitmentPublicKey: status.commitmentPublicKey,
+    commitmentSignature: session.latestVoucherSignature,
+    commitmentPublicKey: session.commitmentPublicKey,
     signerUrl,
     network: input.network,
   }

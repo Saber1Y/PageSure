@@ -14,6 +14,7 @@ import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
 import { organizations, paymentSessions } from '@/lib/db/schema'
 import { network, rpcUrl } from '@/lib/mpp/registry'
+import { providerSignerEnvironment } from '@/lib/mpp/signer-env'
 import { explorerUrl } from '@/lib/metering/record'
 
 /**
@@ -24,9 +25,10 @@ import { explorerUrl } from '@/lib/metering/record'
  * one-way channel, send N off-chain signed commitments, then settle once on chain.
  *
  * Nothing here is simulated. The demo payer signs and submits the factory `open`; the
- * organization's signer service signs and submits `close`; PageSure verifies both against
- * chain. The only convenience is that the private keys live in the server environment,
- * exactly as they do for the charge-mode playground (see lib/agent/runner.ts).
+ * payer signs vouchers and the organization's signer submits `close` with treasury
+ * authorization; PageSure verifies the resulting transfer against chain. The demo private
+ * keys live in the server environment, exactly as they do for the charge-mode playground
+ * (see lib/agent/runner.ts).
  */
 
 export interface SessionStep {
@@ -133,6 +135,7 @@ export async function openChannelSession(input: {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       funder: payer.publicKey(),
+      commitmentPublicKey: commitmentKeypair().publicKey(),
       fundedBase,
       refundWaitingPeriodSeconds,
     }),
@@ -384,10 +387,9 @@ async function ensureSigner(): Promise<void> {
   }
   const token = signerToken()
   const env = {
-    ...process.env,
+    ...providerSignerEnvironment(process.env),
     SIGNER_PORT: process.env.SIGNER_PORT ?? '4457',
     SIGNER_TOKEN: token,
-    AGENT_COMMITMENT_SEED: process.env.AGENT_COMMITMENT_SEED ?? '',
     SIGNER_TREASURY_SECRET: process.env.SESSION_TREASURY_SECRET ?? '',
     SIGNER_RPC_URL: rpcUrl() ?? '',
     SIGNER_NETWORK: network(),

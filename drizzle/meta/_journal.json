@@ -36,6 +36,13 @@
       "when": 1791111199976,
       "tag": "0004_treasury_challenge",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1791565890443,
+      "tag": "0005_payer_voucher_settlement",
+      "breakpoints": true
     }
   ]
 }
