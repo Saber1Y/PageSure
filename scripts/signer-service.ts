@@ -21,6 +21,7 @@
  *
  * Environment:
  *   SIGNER_PORT              listening port (default 4457)
+ *   SIGNER_HOST              bind address (default: all interfaces); 127.0.0.1 behind a proxy
  *   SIGNER_TOKEN             bearer token the signer accepts and presents to PageSure
  *   SIGNER_TREASURY_SECRET   secret of the treasury account that receives the payout
  *   PAGESURE_ORIGIN          base URL of the PageSure instance (default http://localhost:3000)
@@ -58,6 +59,7 @@ interface SettlementIntent {
 }
 
 const port = Number(process.env.SIGNER_PORT ?? 4457)
+const host = process.env.SIGNER_HOST?.trim() || undefined
 const token = process.env.SIGNER_TOKEN ?? ''
 const origin = (process.env.PAGESURE_ORIGIN ?? 'http://localhost:3000').replace(/\/+$/, '')
 const network = process.env.SIGNER_NETWORK ?? 'stellar:testnet'
@@ -294,8 +296,8 @@ const server = createServer(async (req, res) => {
   }
 })
 
-server.listen(port, () => {
+server.listen(port, host, () => {
   console.log(
-    `[signer] listening on :${port} network=${network} treasury=${treasury.publicKey()}`,
+    `[signer] listening on ${host ?? ''}:${port} network=${network} treasury=${treasury.publicKey()}`,
   )
 })
