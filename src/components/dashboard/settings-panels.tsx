@@ -224,9 +224,10 @@ export function SignerPanel({
 
       <p className="text-[13px] leading-relaxed text-ink-3">
         Only needed to open payment channels, where many requests settle in one on-chain
-        transaction. Your signer service holds the key and signs commitments on request:
-        PageSure never sees it, and stores only the address to call and the name of the
-        environment variable holding the token.
+        transaction. Your signer service uses the organization&apos;s treasury account to submit
+        withdrawals authorized by payer-signed vouchers. It should never hold a payer&apos;s
+        commitment key. PageSure stores only the address to call and the name of the environment
+        variable holding the token.
       </p>
 
       {registered && signerUrl ? (

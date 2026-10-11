@@ -1,28 +1,20 @@
 /**
  * Organization signer service for PageSure session (channel) settlement.
  *
- * PageSure deliberately stores neither the organization's commitment secret nor its treasury
- * secret, so withdrawals from a one-way channel must be signed and submitted by the
- * organization's own signer service. This script is that service for the live channel demo.
+ * The payer signs vouchers with its own commitment key. The provider signer receives that
+ * already-authorized signature from PageSure and submits the close using only the organization's
+ * treasury account key. It never receives the payer's commitment secret and cannot create a
+ * larger voucher.
  *
  * It speaks the protocol PageSure already implements:
- *
- *   POST /sign
- *     body: { commitment: hex, context: { channel, amountBase, network } }
- *     ->   { signature: hex }
- *
- *     Signs a commitment XDR blob the client asks for, but only after verifying it actually
- *     binds to the channel, amount and network the caller claims. A signer that signs blind
- *     would be a signature oracle; this one is not.
  *
  *   POST /settle
  *     body: { slug, sessionId }
  *     ->   { txHash, sender, ... }
  *
- *     Fetches PageSure's authoritative settlement intent for the session, simulates
- *     prepare_commitment(cumulative) on the live channel to get the exact XDR bytes the
- *     contract will validate, binds them, signs with the commitment key, and submits the
- *     close() that pays PageSure's recorded cumulative to the organization's treasury.
+ *     Fetches PageSure's authoritative settlement intent, simulates
+ *     prepare_commitment(cumulative), verifies the stored payer signature against the
+ *     funder's public key, and submits close() with the treasury account authorization.
  *
  * Both Bearer-token the same way, so the signer cannot be coerced by anyone who does not
  * hold the organization's signer token.
@@ -30,7 +22,6 @@
  * Environment:
  *   SIGNER_PORT              listening port (default 4457)
  *   SIGNER_TOKEN             bearer token the signer accepts and presents to PageSure
- *   AGENT_COMMITMENT_SEED    hex ed25519 seed of the organization commitment keypair
  *   SIGNER_TREASURY_SECRET   secret of the treasury account that receives the payout
  *   PAGESURE_ORIGIN          base URL of the PageSure instance (default http://localhost:3000)
  *   SIGNER_NETWORK           CAIP network id (default stellar:testnet)
@@ -47,7 +38,7 @@ import {
   xdr,
 } from '@stellar/stellar-sdk'
 import { close } from '@stellar/mpp/channel/server'
-import { assertCommitmentBinds } from '@/lib/mpp/commitment'
+import { assertCommitmentBinds, verifyCommitmentSignature } from '@/lib/mpp/commitment'
 
 interface SettlementIntent {
   sessionId: string
@@ -60,6 +51,7 @@ interface SettlementIntent {
   cumulativeBase: string
   cumulativeFormatted: string
   requestCount: number
+  commitmentSignature: string
   commitmentPublicKey: string
   signerUrl: string
   network: string
@@ -76,36 +68,25 @@ const passphrase: 'stellar:testnet' | 'stellar:pubnet' | 'stellar:futurenet' | '
   network === 'stellar:standalone' ? 'stellar:standalone' :
   'stellar:testnet'
 
-const seedHex = process.env.AGENT_COMMITMENT_SEED ?? ''
-const commitmentSecret = process.env.SIGNER_TREASURY_SECRET ?? ''
+const treasurySecret = process.env.SIGNER_TREASURY_SECRET ?? ''
 
 function fail(message: string): never {
   throw new Error(message)
 }
 
-if (!/^[0-9a-f]{64}$/.test(seedHex)) fail('AGENT_COMMITMENT_SEED must be a 64-char hex ed25519 seed')
-if (!commitmentSecret) fail('SIGNER_TREASURY_SECRET is required')
+if (!treasurySecret) fail('SIGNER_TREASURY_SECRET is required')
+if (process.env.AGENT_COMMITMENT_SEED) {
+  fail('AGENT_COMMITMENT_SEED must never be provided to the provider signer process')
+}
 if (!rpcUrl) fail('SIGNER_RPC_URL is required')
 if (!passphrase) fail(`SIGNER_NETWORK must be a CAIP id with a known passphrase (got ${network})`)
 
-const commitmentKey = Keypair.fromRawEd25519Seed(Buffer.from(seedHex, 'hex'))
-const treasury = Keypair.fromSecret(commitmentSecret)
-
-function bytesToHex(bytes: Uint8Array): string {
-  return Buffer.from(bytes instanceof Uint8Array ? bytes : (bytes as Buffer)).toString('hex')
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  if (!/^[0-9a-f]+$/.test(hex.trim()) || hex.length % 2 !== 0) {
-    throw new Error('commitment must be even-length hex')
-  }
-  return Buffer.from(hex.trim(), 'hex')
-}
+const treasury = Keypair.fromSecret(treasurySecret)
 
 /**
- * Simulate prepare_commitment(amount) against the live channel so we sign exactly the bytes
- * the channel contract will validate at close. The simulation is read-only; nothing is
- * submitted for the request itself.
+ * Simulate prepare_commitment(amount) against the live channel so we verify the payer's
+ * signature against the exact bytes the contract will validate at close. The simulation is
+ * read-only; nothing is submitted for the request itself.
  */
 async function prepareCommitmentBytes(channelContract: string, amount: bigint): Promise<Uint8Array> {
   const server = new rpc.Server(rpcUrl)
@@ -175,45 +156,11 @@ async function reportSettlement(slug: string, sessionId: string, txHash: string)
   throw new Error(`settlement report to ${url} failed (${last}); re-POST { sessionId, txHash } there to complete`)
 }
 
-/** The org token guards the sign endpoint. Refuse a caller that does not hold it. */
+/** The org token guards settlement. Refuse a caller that does not hold it. */
 function authorized(request: Request): boolean {
   if (!token) return true
   const raw = request.headers.get('authorization') ?? ''
   return raw === `Bearer ${token}`
-}
-
-async function handleSign(body: Record<string, unknown>): Promise<{ signature: string } | { error: string; status: number }> {
-  if (typeof body.commitment !== 'string') {
-    return { error: 'expected { commitment, context }', status: 400 }
-  }
-  const context = body.context
-  if (typeof context !== 'object' || context === null) {
-    return { error: 'expected { commitment, context }', status: 400 }
-  }
-  const { channel, amountBase, network: claimNetwork } = context as Record<string, unknown>
-  if (typeof channel !== 'string' || typeof amountBase !== 'string' || typeof claimNetwork !== 'string') {
-    return { error: 'context must include channel, amountBase and network', status: 400 }
-  }
-
-  const commitmentBytes = hexToBytes(body.commitment)
-
-  // Bind before signing. If the bytes do not encode a commitment for this channel, amount and
-  // network, they get no signature.
-  try {
-    await assertCommitmentBinds(commitmentBytes, {
-      channel,
-      amountBase,
-      network: claimNetwork,
-    })
-  } catch (error) {
-    return {
-      error: `refusing to sign unbound commitment: ${error instanceof Error ? error.message : String(error)}`,
-      status: 409,
-    }
-  }
-
-  const signature = commitmentKey.sign(Buffer.from(commitmentBytes))
-  return { signature: bytesToHex(signature) }
 }
 
 async function handleSettle(body: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -244,9 +191,15 @@ async function handleSettle(body: Record<string, unknown>): Promise<Record<strin
     amountBase: intent.cumulativeBase,
     network: intent.network,
   })
-  const signature = commitmentKey.sign(Buffer.from(commitmentBytes))
+  if (!/^[0-9a-f]{128}$/i.test(intent.commitmentSignature)) {
+    return { error: 'settlement intent has no valid payer voucher signature', status: 409 }
+  }
+  const signature = Buffer.from(intent.commitmentSignature, 'hex')
+  if (!verifyCommitmentSignature(commitmentBytes, signature, intent.commitmentPublicKey)) {
+    return { error: 'payer voucher signature does not authorize this settlement amount', status: 409 }
+  }
 
-  const feePayer = { envelopeSigner: commitmentSecret }
+  const feePayer = { envelopeSigner: treasurySecret }
   const txHash = await close({
     channel: intent.channelContract,
     amount,
@@ -278,7 +231,7 @@ async function handleSettle(body: Record<string, unknown>): Promise<Record<strin
     cumulativeBase: intent.cumulativeBase,
     cumulativeFormatted: intent.cumulativeFormatted,
     requestCount: intent.requestCount,
-    signer: commitmentKey.publicKey(),
+    signer: treasury.publicKey(),
   }
 }
 
@@ -312,25 +265,13 @@ const server = createServer(async (req, res) => {
         ok: true,
         service: 'pagesure-signer',
         network,
-        channelSigner: commitmentKey.publicKey(),
+        role: 'treasury settlement signer',
         treasury: treasury.publicKey(),
       })
       return
     }
 
     const body = readJson()
-
-    if (req.method === 'POST' && req.url === '/sign') {
-      if (!authorized(request)) return send(401, { error: 'unauthorized' })
-      if (!body) return send(400, { error: 'expected a JSON body' })
-      const result = await handleSign(body)
-      if ('status' in result && typeof result.status === 'number' && 'error' in result) {
-        send(result.status, { error: result.error })
-        return
-      }
-      send(200, result)
-      return
-    }
 
     if (req.method === 'POST' && req.url === '/settle') {
       if (!authorized(request)) return send(401, { error: 'unauthorized' })
@@ -355,6 +296,6 @@ const server = createServer(async (req, res) => {
 
 server.listen(port, () => {
   console.log(
-    `[signer] listening on :${port} network=${network} channelSigner=${commitmentKey.publicKey()} treasury=${treasury.publicKey()}`,
+    `[signer] listening on :${port} network=${network} treasury=${treasury.publicKey()}`,
   )
 })

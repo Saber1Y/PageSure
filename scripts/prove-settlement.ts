@@ -50,10 +50,16 @@ const { validateSignerRegistration, signerRegistrationAvailable } = await import
 const { authenticateSignerToken, settlementIntent } = await import('../src/lib/mpp/settlement-intent')
 const { handleChannelRequest } = await import('../src/lib/sessions/gateway')
 const { createSessionRow } = await import('../src/lib/sessions/manager')
+const { providerSignerEnvironment } = await import('../src/lib/mpp/signer-env')
 
 process.env.CHANNEL_FACTORY_C ??= 'CDENABPOYPNPJFP2TEFO5UJFYCA7OGG6Y7TBU5XFXZ3WJJN5FKOLXN4B'
 
 runMigrations()
+
+const filteredSignerEnv = providerSignerEnvironment({
+  AGENT_COMMITMENT_SEED: 'payer-secret-must-not-cross-this-boundary',
+  SIGNER_TREASURY_SECRET: 'provider-treasury-secret',
+})
 
 // ---------------------------------------------------------------------------
 // Assertion harness
@@ -118,8 +124,8 @@ const B_TREASURY = 'GBWDEM3JNHGGNRNT5N6QJ5UUULT6C7J6MEPO3C2FFRSTFLVUPLCGV5C4'
 const PAYER = 'GPAYERBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
 const CHANNEL_A = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 const CHANNEL_B = 'CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
-const COMMITMENT_A = 'GA3Z5J5F62Z7D4VQ2SYJ3W7R2KX4M9N6P8Q1T3V5X7Z9B1C3D5F7H9J2L4N6P8Q'
-const COMMITMENT_B = 'GB4C6K8G7Y3E5W3R3Z4X2U6V8S1T5W7Y9Z1B3D5F7H9J2L4N6P8Q1R3T5V7W9Z1B3'
+const COMMITMENT_A = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 31)).publicKey()
+const COMMITMENT_B = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 32)).publicKey()
 
 // Operator policy for the whole proof.
 process.env.MPP_SIGNER_HOSTS = 'signer.a.example, signer.b.example'
@@ -288,20 +294,6 @@ function eqOrg(id: string) {
   return eq(schema.organizations.id, id)
 }
 
-// Signup collects a signer but not a commitment key. An organization that intends to use
-// channel mode configures the key that the channel contract will hold, so set it here the way
-// the completed setup would have.
-db()
-  .update(schema.organizations)
-  .set({ commitmentPublicKey: COMMITMENT_A })
-  .where(eq(schema.organizations.id, a.organizationId))
-  .run()
-db()
-  .update(schema.organizations)
-  .set({ commitmentPublicKey: COMMITMENT_B })
-  .where(eq(schema.organizations.id, b.organizationId))
-  .run()
-
 // ---------------------------------------------------------------------------
 // Services and sessions
 // ---------------------------------------------------------------------------
@@ -358,6 +350,7 @@ function insertSession(
       assetContract: 'CA_USDC',
       decimals: 7,
       commitmentPublicKey: commitmentKey,
+      latestVoucherSignature: 'ab'.repeat(64),
       cumulativeBase: cumulative,
       requestCount: requests,
       fundedBase: '50000000',
@@ -381,11 +374,8 @@ check('org B channel service resolves', resolveServiceBySlug('chan-b') !== null)
 // ---------------------------------------------------------------------------
 
 /*
- * The MPP server method verifies voucher signatures with `Keypair.fromPublicKey(string)`,
- * which only accepts an ed25519 (G...) StrKey. The organization commitment key is a
- * med25519 (M...) StrKey over the same 32 raw bytes, so `createSessionRow` must store the
- * ed25519 encoding of those bytes - not a hex dump, which throws `invalid version byte` on
- * every voucher check.
+ * MPP verifies voucher signatures with `Keypair.fromPublicKey(string)`, which accepts the
+ * payer's ed25519 (G...) public key. The provider's organization key is not involved.
  */
 section('Session rows store the commitment key the SDK can verify')
 
@@ -396,7 +386,6 @@ process.env.MPP_SIGNER_HOSTS = `${process.env.MPP_SIGNER_HOSTS}, ${C_SIGNER_HOST
 process.env.PAGESURE_SIGNER_TOKEN_C = 'token-for-org-c-do-not-leak'
 
 const C_KEY = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 7))
-const C_MKEY = StrKey.encodeMed25519PublicKey(C_KEY.rawPublicKey())
 const c = createOrganizationWithOwner({
   walletPublicKey: C_WALLET,
   displayName: 'Org C Owner',
@@ -405,17 +394,12 @@ const c = createOrganizationWithOwner({
   signerUrl: `https://${C_SIGNER_HOST}`,
   signerTokenEnv: 'PAGESURE_SIGNER_TOKEN_C',
 })
-db()
-  .update(schema.organizations)
-  .set({ commitmentPublicKey: C_MKEY })
-  .where(eq(schema.organizations.id, c.organizationId))
-  .run()
-
 insertChannelService('svc_c', c.organizationId, 'chan-c')
 const sessionCId = createSessionRow({
   organizationId: c.organizationId,
   serviceId: 'svc_c',
   funder: PAYER,
+  commitmentPublicKey: C_KEY.publicKey(),
   assetContract: 'CA_USDC',
   decimals: 7,
   fundedBase: '50000000',
@@ -427,10 +411,10 @@ const stored = db()
   .where(eq(schema.paymentSessions.id, sessionCId))
   .get()?.commitmentPublicKey ?? ''
 
-check('the stored key is a valid ed25519 StrKey', StrKey.isValidEd25519PublicKey(stored))
+check('the stored payer key is a valid ed25519 StrKey', StrKey.isValidEd25519PublicKey(stored))
 accepts('Keypair.fromPublicKey accepts the stored key', () => {
   const pub = Keypair.fromPublicKey(stored).rawPublicKey()
-  const expected = Buffer.from(StrKey.decodeMed25519PublicKey(C_MKEY))
+  const expected = Buffer.from(StrKey.decodeEd25519PublicKey(C_KEY.publicKey()))
   if (!Buffer.from(pub).equals(expected)) {
     throw new Error('stored G-form does not encode the same raw bytes as the M-key')
   }
@@ -441,6 +425,8 @@ accepts('Keypair.fromPublicKey accepts the stored key', () => {
 // ---------------------------------------------------------------------------
 
 section('Settlement intents require the organization signer token')
+check('provider signer environment strips the payer seed', filteredSignerEnv.AGENT_COMMITMENT_SEED === undefined)
+check('provider signer environment retains treasury authorization', filteredSignerEnv.SIGNER_TREASURY_SECRET === 'provider-treasury-secret')
 
 throws('a settlement intent with no token is refused', () => {
   authenticateSignerToken(a.organizationId, null)
@@ -496,7 +482,8 @@ check('intent returns the recorded cumulative', intentA.cumulativeBase === '1750
 check('intent formats the cumulative for the asset', intentA.cumulativeFormatted === '0.1750000')
 check('intent carries the request count', intentA.requestCount === 7)
 check('intent directs the withdrawal at the org treasury', intentA.recipient === A_TREASURY)
-check('intent names the organization commitment key', intentA.commitmentPublicKey === COMMITMENT_A)
+check('intent names the payer commitment key', intentA.commitmentPublicKey === COMMITMENT_A)
+check('intent returns the exact recorded payer voucher signature', intentA.commitmentSignature === 'ab'.repeat(64))
 check('intent names the signer URL', intentA.signerUrl.startsWith('https://signer.a.example'))
 check('intent carries the asset code from the service', intentA.assetCode === 'USDC')
 

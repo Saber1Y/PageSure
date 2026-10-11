@@ -103,7 +103,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
           <div className="px-5 pb-5">
             <KeyValue k="Funder" v={session.funder} mono />
             <KeyValue k="Recipient" v={session.recipient} mono />
-            <KeyValue k="Commitment key" v={session.commitmentPublicKey} mono />
+            <KeyValue k="Funder voucher key" v={session.commitmentPublicKey} mono />
             <KeyValue k="Channel" v={session.channelContract} mono />
             <KeyValue k="Asset" v={`${session.assetContract}`} mono />
             <KeyValue k="Network" v="stellar:testnet" mono />
@@ -154,8 +154,10 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
           <div className="px-5 pb-5">
             <PolicyTraceView
               trace={example.policyTrace}
-              payment={example.status === 'paid' ? 'settled' : 'not_committed'}
-              service={example.status === 'paid' ? 'delivered' : 'not_executed'}
+              payment={example.mode === 'channel'
+                ? (example.status === 'paid' || example.status === 'failed' ? 'committed' : 'not_committed')
+                : example.status === 'paid' ? 'settled' : 'not_committed'}
+              service={example.status === 'paid' ? 'delivered' : example.status === 'failed' ? 'failed' : 'not_executed'}
             />
           </div>
         </Card>

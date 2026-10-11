@@ -363,6 +363,7 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
       config: service.upstreamConfig,
       search: url.searchParams,
       body: requestBody,
+      signal: rawRequest.signal,
     })
 
     const settlementId = recordSettlement({

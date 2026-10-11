@@ -1,8 +1,8 @@
 /**
  * Settlement completion: PageSure accepting an on-chain channel close after the fact.
  *
- * The organization's signer service signs the cumulative and submits `close()` itself - PageSure
- * stores neither the treasury secret nor the commitment key. Once the transaction lands the
+ * The organization's signer service submits `close()` with the payer's signature and treasury
+ * authorization - PageSure stores neither private key. Once the transaction lands the
  * signer reports the tx hash back here, and this module decides whether the session may move to
  * `closed`.
  *

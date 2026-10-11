@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
 import {
+  organizations,
   policyAssets,
   policyNetworks,
   policies,
@@ -13,6 +14,7 @@ import { network, USDC_SAC_TESTNET } from '@/lib/mpp/registry'
 import { recordActivity } from '@/lib/metering/record'
 import { validateSlug, type SlugRejection } from './slug'
 import { UPSTREAM_KINDS, type UpstreamKind } from '@/lib/upstream/kinds'
+import { StrKey } from '@stellar/stellar-sdk'
 
 /**
  * Creating a service: the first thing an operator does, and previously impossible.
@@ -62,6 +64,7 @@ export type CreateServiceFailure =
   | 'upstream_invalid'
   | 'mode_invalid'
   | 'policy_invalid'
+  | 'session_setup_required'
 
 export interface CreateServiceInput {
   organizationId: string
@@ -134,6 +137,26 @@ export function createService(input: CreateServiceInput): CreateServiceOutcome {
   const status = input.status === 'draft' || input.status === 'paused' ? input.status : 'live'
   if (input.status !== undefined && !['live', 'draft', 'paused'].includes(input.status)) {
     return { ok: false, failure: 'mode_invalid' }
+  }
+
+  // A published channel endpoint is not usable until the organization can receive and settle.
+  // Drafts remain available so an operator can configure the organization in parallel.
+  if (mode === 'channel' && status === 'live') {
+    const org = db().select().from(organizations).where(eq(organizations.id, input.organizationId)).get()
+    const tokenEnv = org?.commitmentSignerTokenEnv ?? ''
+    const ready = Boolean(
+      org?.treasuryVerified && org.settlementRecipient &&
+      org.commitmentSignerUrl?.startsWith('https://') &&
+      /^[A-Z0-9_]+$/.test(tokenEnv) && process.env[tokenEnv] &&
+      StrKey.isValidContract(process.env.CHANNEL_FACTORY_C ?? ''),
+    )
+    if (!ready) {
+      return {
+        ok: false,
+        failure: 'session_setup_required',
+        detail: 'Verify the organization treasury, configure its HTTPS settlement signer and token, and deploy the channel factory in Settings/setup before publishing a session service. You can save this service as a draft.',
+      }
+    }
   }
 
   let priceBase: string

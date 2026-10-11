@@ -15,8 +15,8 @@
  * the failure that would be hardest to notice in a demo.
  */
 
-import { StrKey } from '@stellar/stellar-sdk'
 import { db } from '@/lib/db/client'
+import { StrKey } from '@stellar/stellar-sdk'
 import { organizations } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 
@@ -31,14 +31,6 @@ export interface SettlementTarget {
    * the honest answer for an organization that signed up with an email and stopped there.
    */
   recipient: string | null
-  /**
-   * M... (med25519) commitment public key, for channel-mode services.
-   *
-   * Null when the organization has not registered one. Channel open must fail rather than
-   * substitute a shared key: a shared commitment key would authorize one organization to
-   * sign withdrawals from another organization's channel.
-   */
-  commitmentPublicKey: string | null
 }
 
 export class SettlementUnavailableError extends Error {
@@ -52,7 +44,6 @@ export function settlementTargetForOrganization(organizationId: string): Settlem
   const row = db()
     .select({
       recipient: organizations.settlementRecipient,
-      commitmentPublicKey: organizations.commitmentPublicKey,
     })
     .from(organizations)
     .where(eq(organizations.id, organizationId))
@@ -63,7 +54,7 @@ export function settlementTargetForOrganization(organizationId: string): Settlem
   // and the settlement wallet is connected later. It is carried through as null so the
   // callers that need a payable account fail with a precise reason instead of passing an
   // empty string down into a payment instruction.
-  return { recipient: row.recipient, commitmentPublicKey: row.commitmentPublicKey }
+  return { recipient: row.recipient }
 }
 
 /**
@@ -94,36 +85,4 @@ export function requireSettlementRecipient(organizationId: string): string {
     )
   }
   return target.recipient
-}
-
-/**
- * Commitment key for a channel-mode service.
- *
- * Required only for channels. The raw 32 bytes are returned because the factory contract
- * takes `BytesN<32>`, not a StrKey string: passing the G... encoding would have the SDK read
- * the 56 ASCII characters as bytes and fail at signature time, long after the channel was
- * funded and the money was already escrowed.
- */
-export function requireCommitmentKeyBytes(organizationId: string): Buffer {
-  const target = settlementTargetForOrganization(organizationId)
-  if (!target) {
-    throw new SettlementUnavailableError(`organization ${organizationId} does not exist`)
-  }
-  if (!target.commitmentPublicKey) {
-    throw new SettlementUnavailableError(
-      'this organization has no channel commitment key, so it cannot open payment channels',
-    )
-  }
-  let decoded: Buffer
-  try {
-    decoded = Buffer.from(StrKey.decodeMed25519PublicKey(target.commitmentPublicKey))
-  } catch {
-    throw new SettlementUnavailableError(
-      'this organization has a malformed channel commitment key',
-    )
-  }
-  if (decoded.length !== 32) {
-    throw new SettlementUnavailableError('channel commitment key must be 32 bytes')
-  }
-  return decoded
 }

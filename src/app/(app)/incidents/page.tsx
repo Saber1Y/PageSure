@@ -55,10 +55,16 @@ export default async function IncidentsPage() {
                   <div className="grid gap-x-8 sm:grid-cols-2">
                     <KeyValue k="Payer" v={incident.payer} mono />
                     <KeyValue
-                      k="Amount taken"
+                      k={incident.sessionId ? 'Voucher amount' : 'Amount taken'}
                       v={`${formatAmount(incident.amountBase, incident.decimals)} ${incident.assetCode}`}
                       mono
                     />
+                    {incident.sessionId ? (
+                      <KeyValue
+                        k="Session"
+                        v={<Link href={`/sessions/${incident.sessionId}`} className="text-accent hover:underline">inspect channel</Link>}
+                      />
+                    ) : null}
                     {incident.paymentTxHash ? (
                       <KeyValue k="Transaction" v={incident.paymentTxHash} mono />
                     ) : null}
@@ -76,6 +82,12 @@ export default async function IncidentsPage() {
                       />
                     ) : null}
                   </div>
+                  {incident.sessionId ? (
+                    <p className="text-[12px] leading-relaxed text-review">
+                      This payer-signed voucher may be collected at channel close. It is not an
+                      on-chain settlement yet; resolve the delivery failure with the payer first.
+                    </p>
+                  ) : null}
                 </div>
               </Card>
             )

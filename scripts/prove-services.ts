@@ -48,7 +48,7 @@ const { resolveServiceBySlug, resolveServiceById } = await import('../src/lib/se
 const { evaluatePreflight } = await import('../src/lib/policy/service')
 const { USDC_SAC_TESTNET, network } = await import('../src/lib/mpp/registry')
 const { slugify, validateSlug } = await import('../src/lib/services/slug')
-const { Keypair } = await import('@stellar/stellar-sdk')
+const { Keypair, StrKey } = await import('@stellar/stellar-sdk')
 
 runMigrations()
 
@@ -121,6 +121,48 @@ const base = {
   slug: 'search',
   price: '0.01',
   upstreamKind: 'search',
+}
+
+section('A session service cannot be published without channel infrastructure')
+{
+  const org = seedTenant('Session Readiness')
+  const rejected = createService({
+    organizationId: org.organizationId,
+    ...base,
+    slug: 'session-needs-setup',
+    mode: 'channel',
+  })
+  check('live session publication is refused while signer/factory configuration is missing', !rejected.ok && rejected.failure === 'session_setup_required')
+
+  const draft = createService({
+    organizationId: org.organizationId,
+    ...base,
+    slug: 'session-draft',
+    mode: 'channel',
+    status: 'draft',
+  })
+  check('an operator can save the session service as a draft', draft.ok)
+  if (draft.ok) check('the saved session service remains unpublished', resolveServiceById(draft.serviceId)?.status === 'draft')
+
+  const previousToken = process.env.PAGESURE_TEST_SIGNER
+  const previousFactory = process.env.CHANNEL_FACTORY_C
+  process.env.PAGESURE_TEST_SIGNER = 'test-token'
+  process.env.CHANNEL_FACTORY_C = StrKey.encodeContract(Buffer.alloc(32, 2))
+  db().update(organizations).set({
+    commitmentSignerUrl: 'https://signer.example.test',
+    commitmentSignerTokenEnv: 'PAGESURE_TEST_SIGNER',
+  }).where(eq(organizations.id, org.organizationId)).run()
+  const ready = createService({
+    organizationId: org.organizationId,
+    ...base,
+    slug: 'session-ready',
+    mode: 'channel',
+  })
+  check('session service can be published after treasury, signer, token, and factory are configured', ready.ok, JSON.stringify(ready))
+  if (previousToken === undefined) delete process.env.PAGESURE_TEST_SIGNER
+  else process.env.PAGESURE_TEST_SIGNER = previousToken
+  if (previousFactory === undefined) delete process.env.CHANNEL_FACTORY_C
+  else process.env.CHANNEL_FACTORY_C = previousFactory
 }
 
 // ---------------------------------------------------------------------------

@@ -37,28 +37,10 @@ export const organizations = sqliteTable(
      * account has nowhere to be paid.
      */
     settlementRecipient: text('settlement_recipient'),
-    /**
-     * Channel commitment key for this organization, as the M... (med25519) encoding.
-     *
-     * Separate from settlementRecipient on purpose, because they answer different questions.
-     * `settlementRecipient` is a Stellar *account*: it receives SAC payouts and authorises
-     * `settle`/`close` through `require_auth`. This key is the *off-chain* half: it signs the
-     * cumulative-amount commitments the contract verifies with `ed25519_verify`, and its
-     * private half must never leave the operator's control.
-     *
-     * Nullable because an organization that only runs charge-mode services never opens a
-     * channel and so needs no commitment key. A channel attempt against an organization
-     * without one is refused rather than silently falling back to a shared provider key:
-     * a fallback would let any organization settle into another's channel.
-     */
+    /** Legacy, unused provider key field. Session commitment keys belong to each channel's funder. */
     commitmentPublicKey: text('commitment_public_key'),
-    /**
-     * HTTPS endpoint of this organization's channel signer service.
-     *
-     * PageSure holds no channel private key. A withdrawal needs a signature from the
-     * organization's commitment key, so the organization runs a signer and PageSure asks it to
-     * sign commitment bytes the organization does not get to choose. Nullable because a
-     * charge-mode organization never needs one.
+    /** HTTPS endpoint of this organization's channel settlement service. It submits closes
+     * using treasury authority and the payer's already-signed voucher; it never signs vouchers.
      */
     commitmentSignerUrl: text('commitment_signer_url'),
     /**
@@ -554,10 +536,12 @@ export const paymentSessions = sqliteTable(
     recipient: text('recipient').notNull(),
     assetContract: text('asset_contract').notNull(),
     decimals: integer('decimals').notNull().default(7),
-    /** G... encoding of the commitment public key baked into the channel. */
+    /** Funder-owned G... public key baked into the channel for voucher verification. */
     commitmentPublicKey: text('commitment_public_key').notNull(),
-    /** Latest authorised cumulative commitment, base units. */
+    /** Latest cumulative amount authorized by a verified voucher, base units. */
     cumulativeBase: text('cumulative_base').notNull().default('0'),
+    /** Latest payer-signed voucher that authorizes cumulativeBase; secret material is never stored. */
+    latestVoucherSignature: text('latest_voucher_signature'),
     /** Highest cumulative ever committed, used for monotonicity display. */
     requestCount: integer('request_count').notNull().default(0),
     /** Escrowed in the channel at open time. */

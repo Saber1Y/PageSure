@@ -42,6 +42,9 @@ npm run db:seed
 npm run dev
 ```
 
+Run `npm run readiness` before exercising payment flows. It reports setup status without printing
+keys or credential values and exits nonzero when a required check is missing.
+
 ### Funding testnet accounts
 
 Testnet USDC has no public faucet API, so funding is manual. `npm run keys:generate` prints
@@ -71,11 +74,16 @@ The client signs a Soroban SAC transfer and retries with `Authorization: Payment
 PageSure verifies it, settles it, calls the upstream, and returns the resource with
 `Payment-Receipt` and `X-Pagesure-Payment-Tx`.
 
+See the [charge setup and operation guide](docs/charge-guide.md) for provider configuration,
+Testnet acceptance, and paid-but-undelivered handling.
+
 ### Payment sessions (channel)
 
 Repeated small requests should not settle a transaction each. A session funds a one-way payment
 channel once, then each call signs a cumulative commitment off-chain. Closing the channel pays
-the recipient in **one** transaction.
+the recipient in **one** transaction. The payer owns the commitment key; the provider settlement
+signer submits the payer's voucher with treasury authorization. A verified voucher may still be
+collected if the upstream fails, and PageSure records that as charged-not-delivered.
 
 ```bash
 POST /v1/market-data/session
@@ -87,6 +95,8 @@ POST /v1/market-data/session/confirm
 
 The payer signs the factory `open` invoke itself, so funds never sit in an account PageSure
 controls. PageSure then verifies the deployed channel against chain before it can be used.
+See the [session lifecycle guide](docs/channel-lifecycle.md) for provider setup, payer flow,
+settlement and recovery.
 
 ## Architecture
 
@@ -115,9 +125,10 @@ Two facts shape it:
 2. **The declared payer is untrusted.** It can be refused; it can never authorise an upstream
    call. Only the cryptographically verified credential can do that.
 
-Session mode has neither gap. The funder is fixed on-chain when the channel opens, so policy
-runs authoritatively on every request and a blocked call never advances the cumulative, so it is
-never billed.
+In session mode, the funder is fixed on-chain when the channel opens, so policy runs
+authoritatively on every request and a blocked call never advances the cumulative. After voucher
+verification the payer has authorized that cumulative; an upstream failure is therefore
+recorded as charged-not-delivered and may be collected at settlement.
 
 ### Policy engine
 
@@ -212,10 +223,16 @@ Stated plainly, because a demo that overstates itself is worse than one that doe
 - **Charge mode can charge without delivering.** A post-verification policy block happens after
   settlement. Bounded by `ungrantedSpendCapBase`, recorded as an incident, never hidden. No
   auto-refund is implemented.
-- **Session mode is unproven until a funded channel exists.** The WASM builds and the factory
-  deploys, but end-to-end voucher → settle has not been observed on testnet in this repo. If it
-  cannot be made to work, session mode is cut rather than faked. `147 requests → 1 settlement` is
-  the claim that matters most, and simulating it would discredit everything else.
+- **Session mode has limited testnet evidence.** A funded channel delivered four requests and
+  settled in one close; a separate run observed and recorded a charged-not-delivered upstream
+  failure. The target of `147 delivered requests between channel open and one close settlement`
+  remains unverified. Opening is a separate on-chain transaction.
+- **Independent-payer key separation still needs review.** The payer supplies its commitment
+  public key and signs vouchers; the provider signer submits those vouchers using treasury
+  authority only. Offline proofs and a funded Testnet flow pass, but keep sessions on Testnet
+  until an independent review passes. The local demo runner stores its demo payer seed in `.env`.
+- **One-off charge settlement still needs Testnet evidence.** The charge gateway's offline proof
+  passes, but the seeded treasury must be verified before the live MPP runner can proceed.
 - **Upstream providers must be real.** Strict mode is the default; an unconfigured provider
   returns `503` naming the missing environment variable. Local fallbacks exist for development
   only, behind `PAGESURE_ALLOW_LOCAL_UPSTREAM=1`.
@@ -237,3 +254,5 @@ src/lib/metering/         single writer plus every dashboard aggregate
 scripts/                  audit, key generation, contract build and deploy
 docs/                     installed API surface, channel lifecycle, dependency security
 ```
+
+See [`TODO.md`](./TODO.md) for the staged end-to-end rollout and the evidence still needed.

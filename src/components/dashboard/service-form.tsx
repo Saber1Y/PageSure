@@ -53,6 +53,8 @@ function describe(failure: string, detail?: string): string {
       return 'Choose a payment mode.'
     case 'policy_invalid':
       return detail ?? 'That policy cannot be used for this service.'
+    case 'session_setup_required':
+      return detail ?? 'Configure and verify the organization treasury, signer, and channel factory before publishing a session service.'
     default:
       return 'The service could not be created. Nothing was changed.'
   }

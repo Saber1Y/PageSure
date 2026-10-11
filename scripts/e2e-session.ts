@@ -4,20 +4,20 @@
  * Two subcommands:
  *
  *   npm run e2e:session -- prepare
- *     Wire org_demo (settlement recipient, commitment key, signer URL + token env), create a
+ *     Wire org_demo (settlement recipient, signer URL + token env), create a
  *     channel-mode `market` service, generate + fund the demo treasury, and persist the new
  *     secrets to .env. RESTART the dev server afterwards so it sees the new env.
  *
  *   npm run e2e:session -- run
  *     (default) Spawn the signer service, reserve a session, open + fund + confirm a real
  *     one-way channel as the demo payer, deliver N live requests through the channel, then
- *     settle by fetching PageSure's authoritative intent, preparing + signing the commitment
- *     and submitting the on-chain close. Verifies the DB and the treasury balance.
+ *     settle with the payer's latest signed voucher and the provider treasury account.
+ *     Verifies the DB and the treasury balance.
  *
  * The whole point of the file is the "N requests -> 1 transaction" claim: every request is an
  * off-chain commitment signed by the funder's client; only the open (1) and the close (1)
- * transactions touch the chain. The signer exercises the real protocol PageSure designed for
- * organizations it does not share secrets with.
+ * transactions touch the chain. The payer commitment seed is never passed to the provider
+ * signer process.
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -26,6 +26,7 @@ import { randomBytes } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
 import * as schema from '@/lib/db/schema'
+import { providerSignerEnvironment } from '../src/lib/mpp/signer-env'
 import {
   Keypair,
   StrKey,
@@ -186,10 +187,9 @@ async function ensureSigner(): Promise<void> {
   if (await signerReady()) return
   assert(token, `${signerTokenEnvName} is not set; run the prepare step first`)
   const env = {
-    ...process.env,
+    ...providerSignerEnvironment(process.env),
     SIGNER_PORT: String(signerPort),
     SIGNER_TOKEN: token,
-    AGENT_COMMITMENT_SEED: seedHex,
     SIGNER_TREASURY_SECRET: process.env.SESSION_TREASURY_SECRET ?? '',
     SIGNER_RPC_URL: rpcUrl,
     SIGNER_NETWORK: network,
@@ -293,12 +293,11 @@ function ensureChannelService(orgId: string): void {
     .run()
 }
 
-function wireOrg(orgId: string, commitmentM: string, treasury: string, signerUrl: string): void {
+function wireOrg(orgId: string, treasury: string, signerUrl: string): void {
   db()
     .update(schema.organizations)
     .set({
       settlementRecipient: treasury,
-      commitmentPublicKey: commitmentM,
       commitmentSignerUrl: signerUrl,
       commitmentSignerTokenEnv: signerTokenEnvName,
     })
@@ -310,8 +309,6 @@ function wireOrg(orgId: string, commitmentM: string, treasury: string, signerUrl
 
 async function prepare(): Promise<void> {
   const org = requireOrg(ORG_ID)
-  const commitment = Keypair.fromRawEd25519Seed(Buffer.from(seedHex, 'hex'))
-  const commitmentM = StrKey.encodeMed25519PublicKey(Buffer.from(commitment.rawPublicKey()))
 
   const treasurySecret = process.env.SESSION_TREASURY_SECRET ?? Keypair.random().secret()
   upsertEnv('SESSION_TREASURY_SECRET', treasurySecret)
@@ -321,7 +318,7 @@ async function prepare(): Promise<void> {
 
   const treasury = Keypair.fromSecret(process.env.SESSION_TREASURY_SECRET!)
   ensureChannelService(org.id)
-  wireOrg(org.id, commitmentM, treasury.publicKey(), 'https://signer.pagesure.demo')
+  wireOrg(org.id, treasury.publicKey(), 'https://signer.pagesure.demo')
 
   if (horizon) {
     const hasAccount = await usdcBalance(treasury.publicKey()).then(() => true).catch(() => false)
@@ -334,7 +331,7 @@ async function prepare(): Promise<void> {
 
   assert(process.env[signerTokenEnvName], 'signer token is missing after prep')
   console.log(
-    `[prepare] org ${org.id}: recipient=${treasury.publicKey()} commitmentKeyM=${commitmentM} ` +
+    `[prepare] org ${org.id}: recipient=${treasury.publicKey()} ` +
       `tokenEnv=${signerTokenEnvName} service=/${SLUG} priceBase=${PRICE_BASE} fundedBase=${FUNDED_BASE}`,
   )
   console.log(
@@ -350,6 +347,7 @@ async function openSessionAndChannel(): Promise<{ sessionId: string; channelCont
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       funder: Keypair.fromSecret(payerSecret).publicKey(),
+      commitmentPublicKey: Keypair.fromRawEd25519Seed(Buffer.from(seedHex, 'hex')).publicKey(),
       fundedBase: FUNDED_BASE,
       refundWaitingPeriodSeconds: REFUND_WAIT_SECONDS,
     }),
@@ -474,7 +472,7 @@ async function run(): Promise<void> {
   assert(seedHex, 'AGENT_COMMITMENT_SEED is not set')
   assert(payerSecret, 'DEMO_PAYER_SECRET is not set')
   assert(rpcUrl && horizonUrl, 'STELLAR_RPC_URL / STELLAR_HORIZON_URL are not set')
-  assert(org.commitmentPublicKey && org.settlementRecipient, 'org is not wired; run npm run e2e:session -- prepare')
+  assert(org.settlementRecipient, 'org is not wired; run npm run e2e:session -- prepare')
 
   const payer = Keypair.fromSecret(payerSecret)
   const treasury = Keypair.fromSecret(process.env.SESSION_TREASURY_SECRET ?? '')
@@ -511,7 +509,7 @@ async function run(): Promise<void> {
   assert(row.cumulativeBase === (BigInt(PRICE_BASE) * BigInt(REQUESTS)).toString(), `cumulative mismatch: ${row.cumulativeBase}`)
   process.stdout.write(`[e2e] DB: requestCount=${row.requestCount} cumulativeBase=${row.cumulativeBase} status=${row.status}\n`)
 
-  console.log(`[e2e] settling through the org signer (signs PageSure's recorded cumulative)...`)
+  console.log(`[e2e] settling through the org signer (submitting the recorded payer voucher)...`)
   const settlement = await settle(sessionId)
   process.stdout.write(
     `[e2e] settlement: cumulativeBase=${settlement.cumulativeBase} requestCount=${settlement.requestCount} tx=${settlement.txHash}\n`,

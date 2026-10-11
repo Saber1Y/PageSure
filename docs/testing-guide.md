@@ -97,7 +97,8 @@ Two consequences shape everything else, and both are load-bearing rather than in
 Three payment shapes exist.
 **Charge mode** settles one transaction per request.
 **Session mode** funds a one-way channel once and settles once at the end.
-Both are covered; only charge mode has been observed here.
+Offline proofs cover both modes. Testnet observations currently cover session mode; the separate
+one-off charge settlement remains outstanding until the treasury is verified and its runner completes.
 
 ## What you can and cannot create
 
@@ -127,9 +128,10 @@ denylist, and which services a policy covers. Part 1b walks it.
 So `ALLOW` is reachable two ways - allowlist a wallet for a standing relationship, or approve a
 held request for a grant scoped to one service for 24 hours.
 
-Two things remain outside the interface: **channel mode** still cannot be provisioned (Part 5), and
-there is **no way to delete a policy** - disable it instead, which refuses with a named reason
-rather than leaving services silently unbound.
+The service form supports channel mode. It does not deploy the factory or configure the external
+organization signer; those are prerequisites described in [Part 5](#part-5---channel-mode) and
+[the channel lifecycle guide](./channel-lifecycle.md). There is **no way to delete a policy** -
+disable it instead, which refuses with a named reason rather than leaving services silently unbound.
 
 Everything in Parts 2 to 5 works from `curl` with no browser session at all, which is why those
 come before the console walkthroughs.
@@ -250,7 +252,6 @@ Optionally:
 | Variable                     | Effect if unset                          |
 | ---------------------------- | ---------------------------------------- |
 | `DEMO_SETTLEMENT_RECIPIENT`  | falls back to `DEMO_OWNER_WALLET`        |
-| `DEMO_COMMITMENT_PUBLIC_KEY` | the channel-mode service is skipped      |
 | `PROVIDER_LABEL`             | display name defaults to `PageSure Demo` |
 
 Then:
@@ -382,9 +383,9 @@ An analyst can read everything and change nothing.
 ### Not in this form yet
 
 **Channel mode needs more than a dropdown.** Selecting `Session` here records the mode, but
-`Market Data` under a session needs a deployed channel factory, a commitment key on the
-organization, and a funded channel. All three are outside this screen, so a session-mode service
-created here will not settle.
+`Market Data` under a session needs a deployed channel factory, a provider treasury signer,
+a payer commitment key supplied per session, and a funded channel. Chain setup is outside this
+screen, so a session-mode service created here will not settle by itself.
 See [Part 5](#part-5---channel-mode).
 
 **Policies are edited elsewhere**, at `/policies/<id>` - see Part 1b.
@@ -672,36 +673,19 @@ rather than an open-ended permission.
 
 ## Part 4 - Take the money
 
-Everything below needs a funded Stellar **Testnet** account, and none of it was run here.
-See [What is not verified](#what-is-not-verified).
-
-```bash
-npm run keys:generate     # testnet keypairs, written to .env
-```
-
-Fund the demo payer:
-
-1. XLM for fees, from <https://friendbot.stellar.org/?addr=YOUR_PUBLIC_KEY>.
-2. A USDC SAC trustline, via <https://lab.stellar.org/account/fund>.
-3. USDC balance, from <https://faucet.circle.com> choosing **Stellar Testnet**.
-
-Testnet USDC has no public faucet API, so this is manual and is the single biggest reason the
-payment paths are unverified in this repository.
-
-With `DEMO_PAYER_SECRET` set and the payer funded, the challenge from Part 3 becomes payable:
-sign the credential, retry with `Authorization: Payment <credential>`, and the gateway verifies it,
-settles it, calls the upstream and returns the resource with `Payment-Receipt` and
-`X-Pagesure-Payment-Tx`.
-
-The upstream also needs credentials.
-`PAGESURE_UPSTREAM_MODE` defaults to `strict`, so an unconfigured search or summariser upstream
-fails loudly rather than silently returning something fake.
-That is deliberate: a paid response that was not really fetched is worse than an error.
+The Testnet session flow is verified below. The one-off charge flow still needs its own live
+settlement: the local seeded organization currently has an unverified treasury, and the runner
+refuses to charge until an organization owner completes treasury verification in Settings.
+Follow the [charge setup guide](./charge-guide.md) for credentials, payer funding, policy, and
+the `npm run e2e:charge` acceptance flow. The runner checks the challenge, MPP payment, response,
+database records, activity feed, and confirmed Testnet transaction.
 
 ## Part 5 - Channel mode
 
-`Market Data` is the seeded channel-mode service, at 0.002 USDC per call.
-The claim it exists to support is **147 requests settling in one transaction**.
+`Market Data` is the seeded channel-mode service, at 0.002 USDC per call. The demo
+`channel-demo` service is 0.01 USDC per call. The target is **147 delivered requests between
+channel open and one close settlement** (the open is itself an on-chain transaction); the
+observed testnet run so far delivered four requests.
 
 ```bash
 npm run contracts:build      # one-way-channel WASM from source
@@ -719,13 +703,32 @@ Then, per `README.md`:
 Each subsequent request signs a cumulative commitment off-chain, and closing pays the recipient
 once.
 
-Also expect **HTTP 501** from a session close attempt, immediately, with no upstream call and no
-change to state.
-Close is not implemented; a deliberate refusal rather than a fake success.
+The ordinary MPP close credential path returns **HTTP 501**: the provider treasury must authorize
+the withdrawal, so PageSure does not submit it. Settlement is a separate authenticated signer
+flow: the signer fetches PageSure's authoritative intent, verifies the payer's voucher signature,
+submits it with the treasury's on-chain authorization, then reports the transaction for chain
+verification. The playground and `npm run e2e:session` drive this flow. See
+[the channel lifecycle guide](./channel-lifecycle.md).
 
-This whole part is unobserved here.
-The WASM builds and the factory deploys, but no funded channel was opened, so treat session mode
-as unproven rather than working.
+#### Observed testnet runs — 2026-10-09
+
+The `scripts/e2e-session.ts` runner opened, confirmed, and closed a funded channel. One successful
+run delivered four CoinGecko responses, advanced the cumulative to `400000` base units, and paid
+`0.0400000` USDC in one close. Open [transaction](https://stellar.expert/explorer/testnet/tx/cbee1d3dc1673a5a90e0e1ea26e7d64720091e33e8a160ee34e6628c48ec0445); close
+[transaction](https://stellar.expert/explorer/testnet/tx/088013e09e35ba4bf70660a156e655964a8a14b251ac68ac899d5467a25a4c45).
+The factory's read-only `admin()` and `wasm_hash()` simulations matched the configured admin and
+the pinned hash `e990bef9ddb8fdac672431d1d95fc804188ef476b73a0f9a7dcd3f004387d815`; build provenance
+records upstream commit `25dea1b303495a7a4184af7605bbb7671ff08da6`.
+
+A separate run hit a transient upstream fetch failure after voucher verification. The API returned
+`payment: committed`; PageSure recorded a `charged_not_delivered` incident and the signer later
+settled the exact payer-authorized cumulative of `300000` base units. Open
+[transaction](https://stellar.expert/explorer/testnet/tx/04428a287e31d31c2b6a8a47e321fa986e34678f01c406bb7d86700c01b33da9); close
+[transaction](https://stellar.expert/explorer/testnet/tx/c0d6d934e70a436d6620fddcd2d4fbf5c1d25c810b2347e4a3dc9715bb088b1e).
+
+The 147-request target remains unverified. The SDK warned that this runner's cumulative anti-reset
+state is in memory and will not survive process restarts; keep channel mode single-process until
+persistent compare-and-set storage is implemented.
 
 ## Part 6 - Read the console
 
@@ -794,14 +797,15 @@ It needs all of: a session, `DEMO_PAYER_SECRET` set to a valid `S…` and **fund
 organization with a settlement account.
 With no funded payer it fails at the gateway.
 
-1. Sign in as the seeded owner wallet.
-2. Open `/playground`.
-3. Expect a **Service** dropdown offering the live **charge-mode** services only - `PageSure Search`
-   and `AI Summarizer`. `Market Data` is absent, because a channel-mode service cannot be paid
-   per-request.
-4. Expect a **Query** box prefilled with `stellar agentic payments`, a price line, and
-   **Run paid request**.
-5. Click it.
+1. Sign in to an organization with services and open `/playground`.
+2. Select a service. Charge services expose the one-request payment flow; session services expose
+   the open, repeated-request, and settle lifecycle controls.
+3. For charge mode, enter a query or payload and choose **Run paid request**. For session mode,
+   configure the payer, channel factory, commitment key, provider signer, and testnet funding
+   first; then open a session, send requests, and settle it.
+4. Follow the lifecycle panel and reconcile the result with the request/session and settlement
+   screens. A visual success alone is not testnet evidence; retain the transaction hash and
+   verify the matching chain state.
 
 Expect a **Request lifecycle** waterfall built from the SDK's own progress events, not an
 animation:
@@ -1093,15 +1097,15 @@ They need no configuration, no wallet, and no network.
 | `npm run prove:policies`   | 87     | policy creation, caps, allow and deny lists        |
 | `npm run prove:charge`     | 68     | the paid path: delivery, receipt, incidents        |
 | `npm run prove:services`   | 68     | service creation, slugs, prices, policy binding    |
-| `npm run prove:isolation`  | 59     | no cross-tenant reads or writes                    |
+| `npm run prove:isolation`  | 55     | no cross-tenant reads or writes                    |
 | `npm run prove:email`      | 58     | sign-in tokens, invitations, mail delivery failure |
-| `npm run prove:settlement` | 56     | intent claim, settlement refusals, close gate      |
+| `npm run prove:settlement` | 59     | intent claim, settlement refusals, close gate      |
 | `npm run prove:treasury`   | 31     | settlement account and signer authorization        |
 | `npm run prove:auth`       | 23     | SEP-53 conformance, challenges, signature refusal  |
 | `npm run prove:signer`     | 20     | signer policy and transport                        |
 | `npm run prove:commitment` | 20     | commitment construction                            |
 | `npm run prove:upgrade`    | 13     | migrating a populated older database               |
-| **Total**                  | **503**|                                                    |
+| **Total**                  | **502**|                                                    |
 
 Expect `N passed, 0 failed` from each, where `N` matches the table.
 If a count differs, the suite changed: read the diff rather than adjusting the expectation to
@@ -1211,27 +1215,17 @@ If one survives a proof run, that run has a bug: every scratch database must be 
 
 Stated plainly, because a test guide that overstates itself is worse than none.
 
-- **`prove:charge` substitutes the payment method and the upstream, and that is a real limit.**
-  It proves the gateway's own billing, recording and policy code - that a settled payment is
-  delivered, receipted, and recorded, and that a held or mismatched one is not charged. It cannot
-  prove the settlement itself. `charge_not_delivered` in particular is unreachable there: it needs a
-  decision that is ALLOW in preflight and BLOCK after verification, which requires a spend cap to
-  move across the boundary between the two, i.e. a real settlement. The mismatch path reaches the
-  same incident record and is asserted instead.
-  The one real settlement observed on testnet is the run recorded in Part 4.
+- **The live one-off charge run is still outstanding.** `prove:charge` (68 checks) substitutes
+  MPP settlement and the upstream. It verifies delivery/receipt recording, preflight block and
+  review without charge, and post-settlement mismatch/upstream-failure incidents. It cannot prove
+  a live charge settlement. The local charge runner is ready, but correctly stopped because the
+  seeded organization's treasury has not been verified; do not mark charge mode live-verified
+  until `npm run e2e:charge` completes and its transaction is recorded here.
 
-- **No funded Stellar account was available when this guide was first written.**
-  Parts 1 to 3 stop at the 402 challenge because that is as far as the product goes without a
-  funded payer and a working upstream.
-  Settlement, the playground waterfall, `/settlements` and real upstream responses are all
-  unobserved here.
-
-- **Channel mode is unproven.**
-  The WASM builds and the factory deploys, but no funded channel was opened and no voucher was
-  settled.
-  `147 requests -> 1 settlement` is the claim this project rests on, and it is not something this
-  repository has watched happen.
-  If it cannot be made to work, session mode is cut rather than faked.
+- **The full channel throughput claim remains unproven.** A funded channel, four delivered
+  requests, one close settlement, and a charged-not-delivered recovery were observed on Testnet.
+  `147 delivered requests between open and one close settlement` remains the target and has not
+  been observed.
 
 - **The wallet flows in Part 9 have not been exercised end to end.**
   Freighter is unavailable in the headless environment these checks ran in, so they rest on
@@ -1254,18 +1248,19 @@ Stated plainly, because a test guide that overstates itself is worse than none.
   because the engine blocks at the asset and network checks otherwise. There is no screen for
   adding a second asset, so a policy cannot yet price in anything but USDC.
 
-- **The creation form does not create a working channel-mode service.**
-  `Payment mode: Session` records the mode, but session settlement also needs a deployed channel
-  factory, a commitment key on the organization and a funded channel, none of which this screen
-  collects. Choose `Charge`.
+- **Creating a session-mode service does not provision its chain infrastructure.**
+  The form supports `Payment mode: Session`, but session use still needs a deployed channel
+  factory, an organization treasury signer, a payer commitment key supplied for each session,
+  and a funded channel. Follow
+  [the channel lifecycle guide](./channel-lifecycle.md) before using this mode.
 
 - **The seed still creates a separate organization.**
   `npm run db:seed` builds `PageSure Demo`, owned by `DEMO_OWNER_WALLET`, which never merges with
-  an organization you sign up into. It remains the quickest way to get the channel-mode service
-  that the form cannot yet provision.
+  an organization you sign up into. It remains a shortcut to preconfigured demo records, not a
+  requirement for creating a service in your own organization.
 
 - **The gateway, policy engine and console screens have no automated coverage.**
-  The 496 proof checks cover service and policy creation, auth, isolation, settlement refusals,
+  The proof suites cover service and policy creation, auth, isolation, settlement refusals,
   signer policy and migrations.
 
   Parts 1 to 7 were walked by hand.
