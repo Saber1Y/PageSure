@@ -29,7 +29,6 @@ import * as schema from '@/lib/db/schema'
 import { providerSignerEnvironment } from '../src/lib/mpp/signer-env'
 import {
   Keypair,
-  StrKey,
   Contract,
   TransactionBuilder,
   Operation,

@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
 import { paymentSessions, sessionEvents } from '@/lib/db/schema'
 import type { ResolvedService } from '@/lib/services/registry'
