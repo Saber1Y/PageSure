@@ -32,8 +32,10 @@ async function main() {
   const org = db().select().from(schema.organizations).where(eq(schema.organizations.id, service.organizationId)).get()
   assert(org?.treasuryVerified && org.settlementRecipient, 'organization treasury is not verified')
 
+  // An existing allowlist entry belongs to the provider, so it is used as-is and left in place.
   const grant = addListEntry(service.organizationId, service.policyId, 'allow', payer.publicKey(), 'e2e-charge')
-  assert(grant.ok, `could not temporarily allowlist demo payer: ${JSON.stringify(grant)}`)
+  const alreadyListed = !grant.ok && grant.failure === 'wallet_exists'
+  assert(grant.ok || alreadyListed, `could not temporarily allowlist demo payer: ${JSON.stringify(grant)}`)
   try {
     const target = new URL(`/v1/${slug}`, origin)
     target.searchParams.set('q', process.env.E2E_CHARGE_QUERY ?? 'Stellar USDC price')
@@ -84,8 +86,10 @@ async function main() {
     console.log(`Paid delivery verified: request=${requestId} settlement=${settlementId} tx=${txHash} chain=${chain.status}`)
     console.log(`Response body bytes: ${Buffer.byteLength(bodyText)}; provider activity and matching DB rows verified.`)
   } finally {
-    const cleanup = removeListEntry(service.organizationId, service.policyId!, 'allow', payer.publicKey())
-    assert(cleanup.ok, `failed to remove temporary payer allowlist entry: ${JSON.stringify(cleanup)}`)
+    if (!alreadyListed) {
+      const cleanup = removeListEntry(service.organizationId, service.policyId!, 'allow', payer.publicKey())
+      assert(cleanup.ok, `failed to remove temporary payer allowlist entry: ${JSON.stringify(cleanup)}`)
+    }
   }
 }
 
