@@ -98,6 +98,18 @@ controls. PageSure then verifies the deployed channel against chain before it ca
 See the [session lifecycle guide](docs/channel-lifecycle.md) for provider setup, payer flow,
 settlement and recovery.
 
+### Selling your own API
+
+A service can call one of the built-in upstreams (web search, market data, a summariser) or the
+provider's own API. Choose **Your HTTPS API** when creating the service and enter its URL. Each
+paid call is forwarded there with the caller's query string and JSON body, and the response is
+returned to the caller.
+
+The URL must be public `https` on port 443. Every DNS answer is checked at connect time against
+private, loopback, link-local and cloud-metadata ranges, redirects are not followed, the caller's
+headers are never forwarded, and responses are capped at 1 MB. `npm run prove:http-upstream`
+demonstrates each of these, including a public name that resolves to `127.0.0.1`.
+
 ## Architecture
 
 ```
@@ -273,6 +285,9 @@ Stated plainly, because a demo that overstates itself is worse than one that doe
 - **Upstream providers must be real.** Strict mode is the default; an unconfigured provider
   returns `503` naming the missing environment variable. Local fallbacks exist for development
   only, behind `PAGESURE_ALLOW_LOCAL_UPSTREAM=1`.
+- **A provider's own API must be public.** There is no way yet to attach a secret header or
+  API key to the forwarded call, because PageSure does not store provider secrets in its
+  database. Endpoints that need authentication are not supported yet.
 - **This is not a compliance product.** The policy engine enforces what a provider configures. It
   performs no sanctions screening.
 - **Single process only**, as described above.
