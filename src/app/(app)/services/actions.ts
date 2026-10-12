@@ -45,6 +45,7 @@ export async function createServiceAction(input: {
   description?: string
   price: string
   upstreamKind: string
+  upstreamUrl?: string
   mode?: string
   policyId?: string
   status?: string

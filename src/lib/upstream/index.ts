@@ -44,7 +44,7 @@ export interface SummaryResponse {
 export interface UpstreamContext {
   serviceId: string
   serviceName: string
-  /** Which adapter to run: 'search' | 'market' | 'summarize'. */
+  /** Which adapter to run: 'search' | 'market' | 'summarize' | 'http'. */
   upstreamKind: string
   config: Record<string, unknown>
   /** Original client query string, so adapters can read their own params. */
@@ -395,6 +395,11 @@ export async function runUpstream(ctx: UpstreamContext): Promise<{
     case 'summarize': {
       const result = await runSummary(upstreamContext)
       return { provider: result.provider, status: 200, body: result }
+    }
+    case 'http': {
+      // Loaded on demand: the module is only needed by services that call a provider's own API.
+      const { runHttp } = await import('@/lib/upstream/http')
+      return runHttp(upstreamContext)
     }
     default:
       throw new UpstreamError(

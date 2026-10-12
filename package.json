@@ -37,7 +37,8 @@
     "e2e:charge": "tsx --env-file-if-exists=.env scripts/e2e-charge.ts",
     "readiness": "tsx --env-file-if-exists=.env scripts/readiness.ts",
     "treasury:verify": "tsx --env-file-if-exists=.env scripts/verify-treasury.ts",
-    "prove:upstream": "tsx scripts/prove-upstream.ts"
+    "prove:upstream": "tsx scripts/prove-upstream.ts",
+    "prove:http-upstream": "tsx scripts/prove-http-upstream.ts"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^14.0.0",

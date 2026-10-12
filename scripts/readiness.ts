@@ -43,6 +43,7 @@ async function main() {
     if (service.upstreamKind === 'search') upstreamReady = ['BRAVE_API_KEY', 'TAVILY_API_KEY', 'EXA_API_KEY'].some((key) => !!secret(key))
     else if (service.upstreamKind === 'market') upstreamReady = true // Public CoinGecko endpoint; API key is optional.
     else if (service.upstreamKind === 'summarize') upstreamReady = !!secret('LLM_BASE_URL') && !!secret('LLM_API_KEY') && !!secret('LLM_MODEL')
+    else if (service.upstreamKind === 'http') upstreamReady = typeof (service.upstreamConfig as { url?: unknown } | null)?.url === 'string'
     report(`service ${service.slug} upstream`, upstreamReady, upstreamReady ? 'required configuration present' : 'required credentials/configuration missing or upstream kind unknown')
   }
 

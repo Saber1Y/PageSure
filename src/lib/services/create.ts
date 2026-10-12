@@ -14,6 +14,7 @@ import { network, USDC_SAC_TESTNET } from '@/lib/mpp/registry'
 import { recordActivity } from '@/lib/metering/record'
 import { validateSlug, type SlugRejection } from './slug'
 import { UPSTREAM_KINDS, type UpstreamKind } from '@/lib/upstream/kinds'
+import { checkUpstreamUrl } from '@/lib/upstream/http'
 import { StrKey } from '@stellar/stellar-sdk'
 
 /**
@@ -62,6 +63,7 @@ export type CreateServiceFailure =
   | 'price_invalid'
   | 'price_zero'
   | 'upstream_invalid'
+  | 'upstream_url_invalid'
   | 'mode_invalid'
   | 'policy_invalid'
   | 'session_setup_required'
@@ -74,6 +76,8 @@ export interface CreateServiceInput {
   /** Human decimal, e.g. '0.01'. Converted to base units here. */
   price: string
   upstreamKind: string
+  /** The provider's own API, required when upstreamKind is 'http'. */
+  upstreamUrl?: string
   mode?: string
   policyId?: string
   status?: string
@@ -128,6 +132,15 @@ export function createService(input: CreateServiceInput): CreateServiceOutcome {
     return { ok: false, failure: 'upstream_invalid' }
   }
   const upstreamKind = input.upstreamKind as UpstreamKind
+
+  // A provider's own API is the one upstream whose target a tenant chooses. The URL is checked
+  // here and again before every call; see lib/upstream/http for what is refused and why.
+  let upstreamConfig: Record<string, unknown> = {}
+  if (upstreamKind === 'http') {
+    const checked = checkUpstreamUrl(input.upstreamUrl ?? '')
+    if (!checked.ok) return { ok: false, failure: 'upstream_url_invalid', detail: checked.reason }
+    upstreamConfig = { url: checked.url }
+  }
 
   const mode = input.mode === 'channel' ? 'channel' : 'charge'
   if (input.mode !== undefined && input.mode !== 'charge' && input.mode !== 'channel') {
@@ -254,7 +267,7 @@ export function createService(input: CreateServiceInput): CreateServiceOutcome {
           priceBase,
           mode,
           upstreamKind,
-          upstreamConfig: {},
+          upstreamConfig,
           policyId,
           status,
           createdAt: now,

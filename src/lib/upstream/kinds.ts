@@ -11,10 +11,11 @@
  * exactly this array.
  *
  * The env column is what an operator needs to know before publishing, not after: `search` and
- * `summarize` are dead until configured, and `PAGESURE_UPSTREAM_MODE` defaults to strict, so an
- * unconfigured provider fails loudly rather than serving something fake.
+ * `summarize` are dead until configured, `http` needs only the provider's own URL, and
+ * `PAGESURE_UPSTREAM_MODE` defaults to strict, so an unconfigured provider fails loudly rather
+ * than serving something fake.
  */
-export const UPSTREAM_KINDS = ['search', 'market', 'summarize'] as const
+export const UPSTREAM_KINDS = ['search', 'market', 'summarize', 'http'] as const
 
 export type UpstreamKind = (typeof UPSTREAM_KINDS)[number]
 
@@ -50,5 +51,12 @@ export const UPSTREAMS: readonly UpstreamDescriptor[] = [
     clientHint: 'GET ?text=<text>',
     requires: 'LLM_BASE_URL',
     keyless: false,
+  },
+  {
+    kind: 'http',
+    label: 'Your HTTPS API',
+    clientHint: 'GET or POST, forwarded with its query and JSON body',
+    requires: 'a public https URL, entered below',
+    keyless: true,
   },
 ]

@@ -49,6 +49,8 @@ function describe(failure: string, detail?: string): string {
       return 'A price of zero would let anyone call this endpoint for free.'
     case 'upstream_invalid':
       return 'Choose what this service actually calls.'
+    case 'upstream_url_invalid':
+      return detail ?? 'That API URL cannot be used.'
     case 'mode_invalid':
       return 'Choose a payment mode.'
     case 'policy_invalid':
@@ -88,6 +90,7 @@ export default function ServiceForm({ policies }: { policies: PolicyOption[] }) 
         description: String(form.get('description') ?? ''),
         price: String(form.get('price') ?? ''),
         upstreamKind: String(form.get('upstreamKind') ?? ''),
+        upstreamUrl: String(form.get('upstreamUrl') ?? ''),
         mode: String(form.get('mode') ?? 'charge'),
         policyId: String(form.get('policyId') ?? ''),
         status: String(form.get('status') ?? 'live'),
@@ -201,6 +204,31 @@ export default function ServiceForm({ policies }: { policies: PolicyOption[] }) 
             {selected.requires}.
           </p>
         </div>
+
+        {upstreamKind === 'http' ? (
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="upstreamUrl" className="text-[13px] font-medium text-ink-2">
+              API URL
+            </label>
+            <input
+              id="upstreamUrl"
+              name="upstreamUrl"
+              type="url"
+              required
+              inputMode="url"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="https://api.example.com/v1/quote"
+              aria-describedby="upstream-url-help"
+              className={INPUT}
+            />
+            <p id="upstream-url-help" className="text-[12px] leading-relaxed text-ink-3">
+              Paid calls are forwarded here with the caller&apos;s query string and JSON body, and the
+              response is returned to the caller. It must be public https on port 443. The
+              caller&apos;s headers are never forwarded, and redirects are not followed.
+            </p>
+          </div>
+        ) : null}
       </div>
 
       <div className="grid gap-5 sm:grid-cols-2">
