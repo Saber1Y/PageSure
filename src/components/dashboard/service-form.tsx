@@ -206,7 +206,7 @@ export default function ServiceForm({ policies }: { policies: PolicyOption[] }) 
         </div>
 
         {upstreamKind === 'http' ? (
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 sm:col-span-2">
             <label htmlFor="upstreamUrl" className="text-[13px] font-medium text-ink-2">
               API URL
             </label>
@@ -277,7 +277,7 @@ export default function ServiceForm({ policies }: { policies: PolicyOption[] }) 
       </div>
 
       {error ? (
-        <p role="alert" className="text-[13px] leading-relaxed text-danger">
+        <p role="alert" className="rounded-control border border-danger/30 bg-danger-soft px-3 py-2 text-[13px] leading-relaxed text-danger">
           {error}
         </p>
       ) : null}
