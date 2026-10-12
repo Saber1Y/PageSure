@@ -367,7 +367,7 @@ export function LoginPanel({
       ) : null}
 
       {error ? (
-        <p role="alert" className="rounded-control border border-danger/30 bg-danger-soft px-3 py-2 text-[13px] leading-relaxed text-danger">
+        <p role="alert" className="rounded-control border border-block/30 bg-block-soft px-3 py-2 text-[13px] leading-relaxed text-block">
           {error}
         </p>
       ) : null}

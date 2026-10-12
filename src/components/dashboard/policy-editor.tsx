@@ -317,7 +317,7 @@ export default function PolicyEditor({
         </p>
       ) : null}
       {error ? (
-        <p role="alert" className="text-[13px] leading-relaxed text-danger">
+        <p role="alert" className="text-[13px] leading-relaxed text-block">
           {error}
         </p>
       ) : null}

@@ -80,7 +80,7 @@ export function SigninCallback() {
       <div className="w-full max-w-sm text-center">
         {!token ? (
           <>
-            <p role="alert" className="text-[14px] leading-relaxed text-danger">
+            <p role="alert" className="text-[14px] leading-relaxed text-block">
               That link is missing its token. Request a new one.
             </p>
             <a
@@ -92,7 +92,7 @@ export function SigninCallback() {
           </>
         ) : error ? (
           <>
-            <p role="alert" className="text-[14px] leading-relaxed text-danger">
+            <p role="alert" className="text-[14px] leading-relaxed text-block">
               {error}
             </p>
             <a

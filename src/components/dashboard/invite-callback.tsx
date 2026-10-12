@@ -96,7 +96,7 @@ export function InviteCallback() {
 
         {state === 'failed' ? (
           <>
-            <p role="alert" className="text-[14px] leading-relaxed text-danger">
+            <p role="alert" className="text-[14px] leading-relaxed text-block">
               That invitation is invalid, has expired, or has already been used.
             </p>
             <a

@@ -138,7 +138,7 @@ export function AccountChip({
             {busy ? 'Signing out…' : 'Sign out'}
           </button>
           {passkeyError ? (
-            <p role="alert" className="px-3 pb-2 text-[12px] leading-relaxed text-danger">
+            <p role="alert" className="px-3 pb-2 text-[12px] leading-relaxed text-block">
               {passkeyError}
             </p>
           ) : null}
