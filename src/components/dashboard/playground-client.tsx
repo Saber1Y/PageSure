@@ -5,6 +5,7 @@ import { Badge, Button, KeyValue } from '@/components/ui/primitives'
 
 interface ChargeServiceOption {
   slug: string
+  upstreamKind: string
   name: string
   description: string
   price: string
@@ -16,6 +17,16 @@ interface ChannelServiceOption extends ChargeServiceOption {
 }
 
 type Mode = 'charge' | 'session'
+
+/**
+ * The query string for a playground call, by what the service calls. A provider's own API takes
+ * its own parameters, typed as key=value pairs; the built-in adapters read q or text.
+ */
+function searchFor(kind: string | undefined, query: string): Record<string, string> {
+  if (kind === 'summarize') return { text: query }
+  if (kind === 'http') return Object.fromEntries(new URLSearchParams(query.trim().replace(/^\?/, '')))
+  return { q: query }
+}
 
 interface Step {
   step: string
@@ -439,7 +450,7 @@ export function PlaygroundClient({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           slug,
-          search: slug === 'summarize' ? { text: query } : { q: query },
+          search: searchFor(selected?.upstreamKind, query),
         }),
       })
       // A gateway fault can answer with HTML or an empty body, so parsing is guarded:
@@ -497,6 +508,7 @@ export function PlaygroundClient({
         <SessionPanel
           service={{
             slug: selected.slug,
+            upstreamKind: selected.upstreamKind,
             name: selected.name,
             description: selected.description,
             price: selected.price,
@@ -510,7 +522,11 @@ export function PlaygroundClient({
           <div className="flex flex-col gap-5">
             <div className="flex flex-col gap-2">
               <label htmlFor="query" className="text-[13px] font-medium text-ink">
-                {slug === 'summarize' ? 'Text to summarise' : 'Query'}
+                {selected?.upstreamKind === 'summarize'
+                  ? 'Text to summarise'
+                  : selected?.upstreamKind === 'http'
+                    ? 'Query parameters'
+                    : 'Query'}
               </label>
               <textarea
                 id="query"

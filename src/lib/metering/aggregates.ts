@@ -136,6 +136,8 @@ export interface ServiceRollup {
   name: string
   status: string
   mode: string
+  /** Which upstream adapter the service calls, so a client can offer the right inputs. */
+  upstreamKind: string
   priceBase: string
   assetCode: string
   decimals: number
@@ -180,6 +182,7 @@ export function serviceRollups(organizationId: string): ServiceRollup[] {
       name: svc.name,
       status: svc.status,
       mode: svc.mode,
+      upstreamKind: svc.upstreamKind,
       priceBase: svc.priceBase,
       assetCode: svc.assetCode,
       decimals: svc.decimals,

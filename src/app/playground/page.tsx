@@ -44,6 +44,7 @@ export default async function PlaygroundPage() {
           <PlaygroundClient
             services={chargeServices.map((s) => ({
               slug: s.slug,
+              upstreamKind: s.upstreamKind,
               name: s.name,
               description: s.description,
               price: formatAmount(s.priceBase, s.decimals),
@@ -51,6 +52,7 @@ export default async function PlaygroundPage() {
             }))}
             channelServices={channelServices.map((s) => ({
               slug: s.slug,
+              upstreamKind: s.upstreamKind,
               name: s.name,
               description: s.description,
               price: formatAmount(s.priceBase, s.decimals),
