@@ -2,6 +2,8 @@
 
 **Machine-payment gateway for APIs and digital services.**
 
+**Live on Stellar Testnet:** https://pagesure.vercel.app · **Try it in 10 minutes:** [user guide](docs/user-guide.md)
+
 PageSure sits between an application and the service it consumes, and turns HTTP `402 Payment
 Required` into a real, machine-readable payment negotiation over Stellar. An agent makes an
 ordinary HTTP request, gets a payment challenge, authorizes a Stellar transfer, and receives the
