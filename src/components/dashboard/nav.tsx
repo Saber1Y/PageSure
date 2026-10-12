@@ -13,6 +13,7 @@ import { usePathname } from 'next/navigation'
 const LINKS = [
   { href: '/overview', label: 'Overview' },
   { href: '/services', label: 'Services' },
+  { href: '/playground', label: 'Playground' },
   { href: '/sessions', label: 'Sessions' },
   { href: '/policies', label: 'Policies' },
   { href: '/review', label: 'Review' },
