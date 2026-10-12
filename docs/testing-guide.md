@@ -683,9 +683,9 @@ database records, activity feed, and confirmed Testnet transaction.
 ## Part 5 - Channel mode
 
 `Market Data` is the seeded channel-mode service, at 0.002 USDC per call. The demo
-`channel-demo` service is 0.01 USDC per call. The target is **147 delivered requests between
-channel open and one close settlement** (the open is itself an on-chain transaction); the
-observed testnet run so far delivered four requests.
+`channel-demo` service is 0.01 USDC per call. The target was **147 delivered requests between
+channel open and one close settlement** (the open is itself an on-chain transaction); a 2026-10-12
+testnet run delivered **150** and closed once (run record below).
 
 ```bash
 npm run contracts:build      # one-way-channel WASM from source
@@ -733,11 +733,14 @@ close settlement**, matching the 147-request target (150 was the exact funded-ca
 channel: funded `15000000` base units at a `100000` per-request cumulative step). Session
 `ses_8e7a2bb7c00f4eab891e8199`, channel
 [`CDYCTKXYUFROO7VLRVJBWQFER4FIPNLDWF4ZA5TSDTYY5ZQP2YMKT4BU`](https://stellar.expert/explorer/testnet/contract/CDYCTKXYUFROO7VLRVJBWQFER4FIPNLDWF4ZA5TSDTYY5ZQP2YMKT4BU).
-The first 122 requests had succeeded against the CoinGecko market before a transient RPC
+The first 122 requests had succeeded against the same local provider before a transient RPC
 on-chain-state check failed at request 123 (HTTP 402 `verification-failed`); the resumed client
-re-seeded its local cumulative store at `12200000` and delivered the remaining 28 requests. The
-final close settled the exact payer-authorized cumulative of `15000000` base units = `1.5000000`
-USDC. Treasury balance rose by that exact amount. Close
+re-seeded its local cumulative store at `12200000` and delivered the remaining 28 requests. All
+150 requests were served by the hardcoded local quote (`PAGESURE_ALLOW_LOCAL_UPSTREAM=1`), not a
+live upstream, so this run proves the channel and settlement mechanics, not real-upstream
+throughput. The final close settled the exact payer-authorized cumulative of `15000000` base units
+= `1.5000000` USDC; that settlement is a real on-chain transaction. Treasury balance rose by that
+exact amount. Close
 [transaction](https://stellar.expert/explorer/testnet/tx/0ceed63bb08b394d3eb6446437e8ae9d1cf14e5e3a82a26f4f41140bdc3e2806).
 
 Two findings from this run:

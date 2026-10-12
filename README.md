@@ -272,10 +272,13 @@ Stated plainly, because a demo that overstates itself is worse than one that doe
 - **Charge mode can charge without delivering.** A post-verification policy block happens after
   settlement. Bounded by `ungrantedSpendCapBase`, recorded as an incident, never hidden. No
   auto-refund is implemented.
-- **Session mode has limited testnet evidence.** A funded channel delivered four requests and
-  settled in one close; a separate run observed and recorded a charged-not-delivered upstream
-  failure. The target of `147 delivered requests between channel open and one close settlement`
-  remains unverified. Opening is a separate on-chain transaction.
+- **Session mode is proven on testnet, but not yet against a real upstream.** On 2026-10-12 a
+  funded channel delivered **150 requests between channel open and one close settlement** (its
+  exact funded capacity at `100000` base units per request), settling `1.5000000` USDC in a single
+  close; request 151 was refused as over the funded bound. That run used the local development
+  provider (`PAGESURE_ALLOW_LOCAL_UPSTREAM=1`), so it proves the channel, voucher and settlement
+  mechanics, not real-upstream throughput. Earlier runs delivered four requests and recorded one
+  charged-not-delivered upstream failure. Opening is a separate on-chain transaction.
 - **Independent-payer key separation still needs review.** The payer supplies its commitment
   public key and signs vouchers; the provider signer submits those vouchers using treasury
   authority only. Offline proofs and a funded Testnet flow pass, but keep sessions on Testnet
