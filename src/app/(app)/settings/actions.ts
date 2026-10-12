@@ -23,7 +23,7 @@ import {
 import { deliverInvitation } from '@/lib/auth/mail'
 import { issueInvitation, normalizeEmail } from '@/lib/auth/email'
 import { validateSignerRegistration } from '@/lib/mpp/signer-registration'
-import { headers } from 'next/headers'
+import { throttleKey } from '@/lib/auth/client-ip'
 
 /**
  * Organization settings: the settlement wallet and the external signer.
@@ -64,14 +64,6 @@ export interface ActionResult {
   ok: boolean
   failure?: SettingsFailure
   detail?: string
-}
-
-/** The wallet ceremony is expensive and prompts the user; throttle it like any other. */
-async function throttleKey(): Promise<string> {
-  const hdrs = await headers()
-  const fwd = hdrs.get('x-forwarded-for')
-  const ip = fwd?.split(',')[0]?.trim() || hdrs.get('x-real-ip') || 'local'
-  return ip.slice(0, 64)
 }
 
 /**

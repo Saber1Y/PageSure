@@ -1,6 +1,5 @@
 'use server'
 
-import { headers } from 'next/headers'
 import { consumeLoginAttempt, requireUser } from '@/lib/auth/session'
 import { requireRole } from '@/lib/auth/identity'
 import {
@@ -13,6 +12,7 @@ import {
   type PolicyFailure,
   type PolicyInput,
 } from '@/lib/policy/manage'
+import { throttleKey } from '@/lib/auth/client-ip'
 
 /**
  * Create and edit access policies.
@@ -38,13 +38,6 @@ export type PolicyActionFailure =
 export type PolicyActionResult =
   | { ok: true; policyId: string; warning?: string }
   | { ok: false; failure: PolicyActionFailure }
-
-async function throttleKey(): Promise<string> {
-  const hdrs = await headers()
-  const fwd = hdrs.get('x-forwarded-for')
-  const ip = fwd?.split(',')[0]?.trim() || hdrs.get('x-real-ip') || 'local'
-  return ip.slice(0, 64)
-}
 
 type AuthorizeResult =
   | { ok: true; organizationId: string }

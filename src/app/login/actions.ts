@@ -17,6 +17,7 @@ import {
   storeChallenge,
   type SignupError,
 } from '@/lib/auth/session'
+import { throttleKey } from '@/lib/auth/client-ip'
 
 /**
  * Login and signup server actions.
@@ -35,21 +36,6 @@ import {
  *
  * The signature is never, on its own, sufficient for access.
  */
-
-/**
- * Best-effort client identity for throttling.
- *
- * x-forwarded-for is client-controlled, so on its own it would let an attacker reset their
- * own counter by sending a random header. It is therefore used only to slow down casual
- * attempts, never as an identity claim, and the real limit is that a forged signature cannot
- * verify regardless of where it came from.
- */
-async function throttleKey(): Promise<string> {
-  const hdrs = await headers()
-  const fwd = hdrs.get('x-forwarded-for')
-  const ip = fwd?.split(',')[0]?.trim() || hdrs.get('x-real-ip') || 'local'
-  return ip.slice(0, 64)
-}
 
 async function mintSession(userId: string): Promise<void> {
   const hdrs = await headers()

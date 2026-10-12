@@ -1,10 +1,10 @@
 'use server'
 
-import { headers } from 'next/headers'
 import { consumeLoginAttempt, requireUser } from '@/lib/auth/session'
 import { requireRole } from '@/lib/auth/identity'
 import { createService, type CreateServiceFailure } from '@/lib/services/create'
 import { slugify } from '@/lib/services/slug'
+import { throttleKey } from '@/lib/auth/client-ip'
 
 /**
  * Publish a service at /v1/:slug.
@@ -33,13 +33,6 @@ export type ServiceFailure = CreateServiceFailure | 'unauthenticated' | 'forbidd
 export type CreateServiceResult =
   | { ok: true; serviceId: string; policyCreated: boolean }
   | { ok: false; failure: ServiceFailure; detail?: string }
-
-async function throttleKey(): Promise<string> {
-  const hdrs = await headers()
-  const fwd = hdrs.get('x-forwarded-for')
-  const ip = fwd?.split(',')[0]?.trim() || hdrs.get('x-real-ip') || 'local'
-  return ip.slice(0, 64)
-}
 
 /** Slug suggested from the name, for the form to prefill. Never trusted for storage. */
 export async function suggestSlugAction(name: string): Promise<string> {

@@ -20,6 +20,7 @@ import {
   normalizeEmail,
   redeemEmailToken,
 } from '@/lib/auth/email'
+import { throttleKey } from '@/lib/auth/client-ip'
 
 /**
  * Email-first sign-in server actions.
@@ -48,20 +49,6 @@ export type SigninFailure =
   | 'invalid_token'
   | 'org_name_required'
   | 'too_many_attempts'
-
-/**
- * Best-effort client identity for throttling.
- *
- * x-forwarded-for is client-controlled, so on its own it would let an attacker reset their
- * own counter by sending a random header. It only slows casual abuse; the real limits are
- * that a link must be redeemed with a real token and that a token is single-use.
- */
-async function throttleKey(): Promise<string> {
-  const hdrs = await headers()
-  const fwd = hdrs.get('x-forwarded-for')
-  const ip = fwd?.split(',')[0]?.trim() || hdrs.get('x-real-ip') || 'local'
-  return ip.slice(0, 64)
-}
 
 async function mintSession(userId: string): Promise<void> {
   const hdrs = await headers()
