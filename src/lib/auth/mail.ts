@@ -7,14 +7,17 @@
  * operator watching a sign-in screen that accepts an address and then never receiving
  * anything, with nothing in the logs to explain it.
  *
- * Transport is native `fetch` against the provider's REST API rather than an SDK. The call is
- * one POST of a JSON body, and an SDK for it would add a dependency that has to be audited
- * and upgraded for the privilege of saving twenty lines. It also keeps the signing path free
- * of transitive dependencies that execute during a login.
+ * Two transports, chosen by configuration. SMTP (`SMTP_HOST`) wins when set: it is the way to
+ * reach arbitrary recipients without verifying a sending domain, for example through a Gmail
+ * account and an App Password. SMTP is a stateful protocol Node cannot speak natively, so it
+ * goes through nodemailer, which has no dependencies of its own. Resend stays on native `fetch`
+ * against its REST API: one POST of a JSON body is not worth an SDK.
  *
  * This is the only module in the auth path that talks to a third party, and it is
  * deliberately the only one that can be absent. Everything else is local and synchronous.
  */
+
+import nodemailer from 'nodemailer'
 
 export type MailKind = 'signin' | 'invite'
 
@@ -50,6 +53,37 @@ export class MailDeliveryError extends Error {
 function apiKey(): string | null {
   const key = process.env.RESEND_API_KEY?.trim()
   return key ? key : null
+}
+
+interface SmtpConfig {
+  host: string
+  port: number
+  secure: boolean
+  user: string
+  pass: string
+}
+
+/** SMTP settings, or null when SMTP_HOST is unset. Half a configuration is an error, not a fallback. */
+function smtpConfig(): SmtpConfig | null {
+  const host = process.env.SMTP_HOST?.trim()
+  if (!host) return null
+  const user = process.env.SMTP_USER?.trim() ?? ''
+  const pass = process.env.SMTP_PASS?.trim() ?? ''
+  if (!user || !pass) {
+    throw new MailDeliveryError('email delivery is misconfigured on this deployment (SMTP_USER or SMTP_PASS is unset)')
+  }
+  const port = Number(process.env.SMTP_PORT ?? 465)
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new MailDeliveryError('email delivery is misconfigured on this deployment (SMTP_PORT is not a port)')
+  }
+  // 465 is implicit TLS. Any other port must upgrade with STARTTLS, which nodemailer requires
+  // below; a sign-in link is a credential and never crosses the wire in the clear.
+  const secure = process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : port === 465
+  return { host, port, secure, user, pass }
+}
+
+function fromAddress(fallback: string): string {
+  return process.env.MAIL_FROM?.trim() || fallback
 }
 
 /**
@@ -148,8 +182,9 @@ const MAIL_TIMEOUT_MS = 10_000
  * nothing, which is the worst possible outcome here.
  */
 export async function sendMail(mail: OutboundMail): Promise<void> {
+  const smtp = smtpConfig()
   const key = apiKey()
-  if (!key) {
+  if (!smtp && !key) {
     /*
      * Development transport.
      *
@@ -168,12 +203,12 @@ export async function sendMail(mail: OutboundMail): Promise<void> {
         `[pagesure] email delivery is not configured; printing the ${mail.kind} message\n` +
           `[pagesure] to: ${mail.to}\n` +
           `[pagesure] link: ${mail.href}\n` +
-          `[pagesure] set RESEND_API_KEY to send real mail, or PAGESURE_DEV_MAIL=off to fail instead.`,
+          `[pagesure] set SMTP_HOST or RESEND_API_KEY to send real mail, or PAGESURE_DEV_MAIL=off to fail instead.`,
       )
       return
     }
     throw new MailDeliveryError(
-      'email delivery is not configured on this deployment (RESEND_API_KEY is unset)',
+      'email delivery is not configured on this deployment (neither SMTP_HOST nor RESEND_API_KEY is set)',
     )
   }
   // Validate before spending a network round trip, and validate the href itself: a
@@ -188,6 +223,43 @@ export async function sendMail(mail: OutboundMail): Promise<void> {
     throw new MailDeliveryError('the sign-in link must be an http(s) URL')
   }
 
+  if (smtp) {
+    await sendViaSmtp(smtp, mail)
+    return
+  }
+  await sendViaResend(key!, mail)
+}
+
+async function sendViaSmtp(smtp: SmtpConfig, mail: OutboundMail): Promise<void> {
+  const transport = nodemailer.createTransport({
+    host: smtp.host,
+    port: smtp.port,
+    secure: smtp.secure,
+    requireTLS: !smtp.secure,
+    auth: { user: smtp.user, pass: smtp.pass },
+    connectionTimeout: MAIL_TIMEOUT_MS,
+    greetingTimeout: MAIL_TIMEOUT_MS,
+    socketTimeout: MAIL_TIMEOUT_MS,
+  })
+  try {
+    await transport.sendMail({
+      from: fromAddress(`PageSure <${smtp.user}>`),
+      to: mail.to,
+      subject: subjectFor(mail),
+      text: textBody(mail),
+    })
+  } catch (error) {
+    // The server's reply names the account and its policy, so it is detail for the log only.
+    throw new MailDeliveryError(
+      'the mail provider rejected the message',
+      error instanceof Error ? error.message.slice(0, 500) : String(error),
+    )
+  } finally {
+    transport.close()
+  }
+}
+
+async function sendViaResend(key: string, mail: OutboundMail): Promise<void> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), MAIL_TIMEOUT_MS)
   try {
@@ -198,7 +270,7 @@ export async function sendMail(mail: OutboundMail): Promise<void> {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: process.env.MAIL_FROM?.trim() || 'PageSure <onboarding@resend.dev>',
+        from: fromAddress('PageSure <onboarding@resend.dev>'),
         to: [mail.to],
         subject: subjectFor(mail),
         text: textBody(mail),
