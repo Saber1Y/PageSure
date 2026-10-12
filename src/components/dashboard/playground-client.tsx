@@ -218,7 +218,7 @@ function SessionPanel({ service }: { service: ChannelServiceOption }) {
   const spent = requestLog[requestLog.length - 1]?.cumulativeBase ?? null
 
   return (
-    <div className="grid gap-8 lg:grid-cols-[380px_1fr]">
+    <div className="grid gap-8 lg:grid-cols-[380px_minmax(0,1fr)]">
       {/* Controls */}
       <div className="flex flex-col gap-5">
         <p className="mono text-[12px] text-ink-3">
@@ -505,7 +505,7 @@ export function PlaygroundClient({
           }}
         />
       ) : (
-        <div className="grid gap-8 lg:grid-cols-[380px_1fr]">
+        <div className="grid gap-8 lg:grid-cols-[380px_minmax(0,1fr)]">
           {/* Controls */}
           <div className="flex flex-col gap-5">
             <div className="flex flex-col gap-2">
