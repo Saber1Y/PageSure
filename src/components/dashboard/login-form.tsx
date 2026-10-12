@@ -2,13 +2,13 @@
 
 import { useCallback, useState, useSyncExternalStore } from 'react'
 import { useRouter } from 'next/navigation'
-import { requestChallengeAction, verifyChallengeAction } from '@/app/login/actions'
+import { requestChallengeAction, signupAction, verifyChallengeAction } from '@/app/login/actions'
 import { requestSignin } from '@/app/login/email-actions'
 import { safeReturnTo } from '@/lib/auth/return-to'
 import type { WalletProbe } from '@/lib/wallet/detect'
 import { detectWallet, promptWalletAccess, readSigningAddress, signChallenge, walletDetectionMessage } from '@/lib/wallet/detect'
 
-type Stage = 'idle' | 'requesting' | 'signing' | 'verifying' | 'error' | 'sent'
+type Stage = 'idle' | 'requesting' | 'signing' | 'verifying' | 'error' | 'sent' | 'signup' | 'creating'
 
 /**
  * Sign-in.
@@ -31,6 +31,11 @@ export function LoginPanel({
   returnTo?: string
 }) {
   const [stage, setStage] = useState<Stage>('idle')
+  // Which button started the current attempt, so only that button reports progress.
+  const [method, setMethod] = useState<'email' | 'wallet' | null>(null)
+  // A wallet that proved control but has no account yet, waiting to name its organization.
+  const [signupWallet, setSignupWallet] = useState<string | null>(null)
+  const [orgName, setOrgName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [probe, setProbe] = useState<WalletProbe | null>(null)
@@ -43,13 +48,14 @@ export function LoginPanel({
     () => false,
   )
 
-  const busy = stage === 'requesting' || stage === 'signing' || stage === 'verifying'
+  const busy = stage === 'requesting' || stage === 'signing' || stage === 'verifying' || stage === 'creating'
 
   const sendLink = useCallback(
     async (event: React.FormEvent) => {
       event.preventDefault()
       setError(null)
       setNotice(null)
+      setMethod('email')
       setStage('requesting')
       const result = await requestSignin(email, returnTo)
       if (result.ok) {
@@ -80,6 +86,7 @@ export function LoginPanel({
     setError(null)
     setNotice(null)
     setProbe(null)
+    setMethod('wallet')
     setStage('requesting')
     try {
       const challenge = await requestChallengeAction()
@@ -93,9 +100,15 @@ export function LoginPanel({
       }
 
       if (detection.network && !/testnet/i.test(detection.network)) {
-        setNotice(
-          `Freighter is on the ${detection.network} network. This environment is Testnet, so switch the wallet before sending payments.`,
+        // Stop before the wallet is asked for anything. On Mainnet, Freighter's site scanner
+        // labels an unlisted site "flagged as malicious" and offers only "Connect anyway",
+        // which no one should be taught to click; on Testnet the same prompt is the ordinary
+        // one. Everything this deployment does happens on Testnet in any case.
+        setStage('error')
+        setError(
+          `Freighter is on ${/public|main/i.test(detection.network) ? 'Mainnet' : detection.network}. PageSure runs on Stellar Testnet: open Freighter, click the globe icon, choose Testnet, then press Continue with wallet again.`,
         )
+        return
       }
 
       setStage('requesting')
@@ -151,6 +164,14 @@ export function LoginPanel({
         setError(result.error ?? 'The signature could not be verified.')
         return
       }
+      if (result.kind === 'needs_signup') {
+        // Control of the wallet is proven but no account uses it yet. The server mints no
+        // session for this, so the next step is creating the organization, not the dashboard.
+        setNotice(null)
+        setSignupWallet(claimed)
+        setStage('signup')
+        return
+      }
       router.push(safeReturnTo(returnTo, '/overview'))
       router.refresh()
     } catch (err) {
@@ -159,9 +180,99 @@ export function LoginPanel({
     }
   }, [router, returnTo])
 
+  const createOrganization = useCallback(
+    async (event: React.FormEvent) => {
+      event.preventDefault()
+      if (!signupWallet) return
+      setError(null)
+      setStage('creating')
+      try {
+        // A fresh enrolment challenge, bound to this wallet: a login proof cannot create an
+        // organization, so creating one costs one more signature.
+        const challenge = await requestChallengeAction(signupWallet, 'enrol')
+        const signed = await signChallenge(challenge.challenge, { address: signupWallet })
+        if (!signed.ok) {
+          setStage('signup')
+          setError(
+            /reject|cancel|denied/i.test(signed.error)
+              ? 'Request rejected in your wallet.'
+              : signed.error || 'Freighter could not sign the challenge.',
+          )
+          return
+        }
+        const wallet = signed.signerAddress ?? signupWallet
+        const result = await signupAction({
+          challengeId: challenge.challengeId,
+          signature: signed.signature,
+          wallet,
+          organizationName: orgName,
+          // Payments settle to the wallet that just signed, which also proves the treasury.
+          settlementRecipient: wallet,
+        })
+        if (!result.ok) {
+          setStage('signup')
+          setError(result.error || 'The organization could not be created. Try again.')
+          return
+        }
+        router.push(safeReturnTo(returnTo, '/overview'))
+        router.refresh()
+      } catch (err) {
+        setStage('signup')
+        setError(err instanceof Error ? err.message : 'The organization could not be created.')
+      }
+    },
+    [orgName, returnTo, router, signupWallet],
+  )
+
+  const cancelSignup = useCallback(() => {
+    setSignupWallet(null)
+    setOrgName('')
+    setError(null)
+    setMethod(null)
+    setStage('idle')
+  }, [])
+
   return (
     <div className="flex flex-col gap-5">
-      {stage === 'sent' ? (
+      {(stage === 'signup' || stage === 'creating') && signupWallet ? (
+        <form onSubmit={createOrganization} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <p className="text-[14px] font-medium text-ink">Create your organization</p>
+            <p className="text-[13px] leading-relaxed text-ink-3">
+              <span className="mono">{signupWallet.slice(0, 6)}…{signupWallet.slice(-4)}</span> is not
+              registered yet. Name your organization and payments will settle to this wallet.
+              Freighter asks for one more signature.
+            </p>
+          </div>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-[13px] font-medium text-ink-2">Organization name</span>
+            <input
+              required
+              autoFocus
+              maxLength={120}
+              value={orgName}
+              onChange={(e) => setOrgName(e.target.value)}
+              placeholder="Acme Research"
+              className="rounded-control border border-line-strong bg-surface px-3 py-2.5 text-[14px] text-ink transition-colors placeholder:text-ink-4 focus:border-accent focus:outline-none"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={busy || !orgName.trim()}
+            className="flex w-full items-center justify-center gap-2 rounded-control bg-accent px-4 py-3 text-[14px] font-medium text-on-accent transition-colors hover:bg-accent-hover active:translate-y-px disabled:opacity-50"
+          >
+            {stage === 'creating' ? 'Approve in wallet…' : 'Create organization'}
+          </button>
+          <button
+            type="button"
+            onClick={cancelSignup}
+            disabled={busy}
+            className="text-[13px] text-ink-3 underline underline-offset-2 transition-colors hover:text-ink disabled:opacity-50"
+          >
+            Use a different sign-in method
+          </button>
+        </form>
+      ) : stage === 'sent' ? (
         <div className="flex flex-col gap-4">
           <div role="status" className="rounded-control border border-line bg-surface-2 px-3 py-3">
             <p className="text-[14px] leading-relaxed text-ink">
@@ -204,7 +315,7 @@ export function LoginPanel({
               disabled={busy}
               className="flex w-full items-center justify-center gap-2 rounded-control bg-accent px-4 py-3 text-[14px] font-medium text-on-accent transition-colors hover:bg-accent-hover active:translate-y-px disabled:opacity-50"
             >
-              {stage === 'requesting' && !busy ? 'Sending…' : busy && stage === 'requesting' ? 'Sending…' : 'Continue with email'}
+              {method === 'email' && stage === 'requesting' ? 'Sending…' : 'Continue with email'}
             </button>
           </form>
 
@@ -228,13 +339,15 @@ export function LoginPanel({
             disabled={busy}
             className="flex w-full items-center justify-center gap-2 rounded-control border border-line-strong bg-surface px-4 py-3 text-[14px] font-medium text-ink transition-colors hover:border-accent active:translate-y-px disabled:opacity-50"
           >
-            {stage === 'requesting'
-              ? 'Approve in wallet…'
-              : stage === 'signing'
-                ? 'Waiting for signature…'
-                : stage === 'verifying'
-                  ? 'Verifying signature…'
-                  : 'Continue with wallet'}
+            {method !== 'wallet'
+              ? 'Continue with wallet'
+              : stage === 'requesting'
+                ? 'Approve in wallet…'
+                : stage === 'signing'
+                  ? 'Waiting for signature…'
+                  : stage === 'verifying'
+                    ? 'Verifying signature…'
+                    : 'Continue with wallet'}
           </button>
 
           {configuredWallet ? (

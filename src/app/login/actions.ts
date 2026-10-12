@@ -222,6 +222,9 @@ export async function signupAction(input: {
       displayName: input.displayName?.trim() || input.organizationName.trim(),
       organizationName: input.organizationName,
       settlementRecipient: input.settlementRecipient,
+      // The enrolment challenge was bound to this wallet and its signature just verified, so a
+      // recipient equal to it is proven exactly as the Settings treasury flow would prove it.
+      treasuryProven: input.settlementRecipient.trim() === check.publicKey,
       signerUrl: input.signerUrl,
       signerTokenEnv: input.signerTokenEnv,
     })

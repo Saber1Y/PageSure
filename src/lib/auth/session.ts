@@ -456,6 +456,12 @@ export function createOrganizationWithOwner(input: {
   settlementRecipient: string
   signerUrl?: string
   signerTokenEnv?: string
+  /**
+   * True only when the caller has just verified a signature from `settlementRecipient` over a
+   * challenge bound to it, which is the same proof the Settings treasury flow requires. Any
+   * other recipient is recorded as unverified and has to be proven in Settings.
+   */
+  treasuryProven?: boolean
 }): { organizationId: string; userId: string } {
   const treasury = input.settlementRecipient.trim()
   if (!StrKey.isValidEd25519PublicKey(treasury)) throw new SignupFailure('invalid_treasury')
@@ -495,6 +501,7 @@ export function createOrganizationWithOwner(input: {
         id: organizationId,
         name: orgName,
         settlementRecipient: treasury,
+        treasuryVerified: input.treasuryProven === true,
         commitmentSignerUrl: signer?.signerUrl ?? null,
         commitmentSignerTokenEnv: signer?.signerTokenEnv ?? null,
         createdAt: now,
@@ -509,6 +516,20 @@ export function createOrganizationWithOwner(input: {
         // First member of a brand-new organization is its owner. There is no path that
         // makes someone owner of an organization they did not create.
         role: 'owner',
+        createdAt: now,
+      })
+      .run()
+    // Access is decided by membership, not by `users.organizationId`. Without this row the
+    // new owner is signed in but resolves to no tenant, and the console, onboarding and login
+    // pages redirect them between each other forever.
+    tx.insert(organizationMembers)
+      .values({
+        id: `mem_${randomBytes(12).toString('hex')}`,
+        organizationId,
+        userId,
+        role: 'owner',
+        invitedBy: null,
+        acceptedAt: now,
         createdAt: now,
       })
       .run()
