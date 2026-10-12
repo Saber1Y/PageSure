@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
-import { organizations } from '@/lib/db/schema'
+import { organizations, services } from '@/lib/db/schema'
 import { requireUser } from '@/lib/auth/session'
 import { signerRegistrationAvailable } from '@/lib/mpp/signer-registration'
 import { roleInOrganization } from '@/lib/auth/identity'
@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/primitives'
 import { SignerPanel, TreasuryPanel } from '@/components/dashboard/settings-panels'
 import { InvitePanel } from '@/components/dashboard/invite-panel'
 import { listMembers } from '@/lib/auth/identity'
+import { receivabilityAdvice, recipientCanReceive } from '@/lib/mpp/receivable'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,6 +38,25 @@ export default async function SettingsPage() {
   const isOwner = role === 'owner'
   const members = listMembers(user.organizationId)
 
+  // Can the connected wallet actually receive what this organization's services charge in?
+  // A fresh wallet usually cannot, and the first paid call would fail inside the token contract.
+  const recipient = organization?.treasuryVerified ? organization.settlementRecipient : null
+  const assets = new Map(
+    db()
+      .select({ contract: services.assetContract, code: services.assetCode })
+      .from(services)
+      .where(eq(services.organizationId, user.organizationId))
+      .all()
+      .map((a) => [a.contract, a.code]),
+  )
+  const unreceivable = recipient
+    ? (
+        await Promise.all(
+          [...assets].map(async ([contract, code]) => ({ code, check: await recipientCanReceive(recipient, contract) })),
+        )
+      ).find((a) => a.check.ok === false)
+    : undefined
+
   return (
     <div className="mx-auto flex max-w-[760px] flex-col gap-6 px-6 py-10">
       <header>
@@ -51,6 +71,12 @@ export default async function SettingsPage() {
         <p className="rounded-control border border-line bg-surface-2 px-3 py-2.5 text-[13px] leading-relaxed text-ink-3">
           Only an owner can change these. You can read the result, which is usually all an
           operator needs.
+        </p>
+      ) : null}
+
+      {unreceivable && unreceivable.check.ok === false ? (
+        <p role="alert" className="rounded-control border border-review/30 bg-review-soft px-3 py-2.5 text-[13px] leading-relaxed text-review">
+          Payments cannot land yet. {receivabilityAdvice(unreceivable.check.reason, unreceivable.code)}
         </p>
       ) : null}
 

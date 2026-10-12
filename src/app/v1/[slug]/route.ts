@@ -1,4 +1,5 @@
-import { requireSettlementRecipient } from '@/lib/mpp/settlement'
+import { requireSettlementRecipient, settlementTargetForOrganization } from '@/lib/mpp/settlement'
+import { receivabilityAdvice, recipientCanReceive } from '@/lib/mpp/receivable'
 import { resolveClaimedPayer } from '@/lib/identity/payer'
 import { resolveServiceBySlug, type ResolvedService } from '@/lib/services/registry'
 import { evaluatePreflight, evaluateAuthoritative } from '@/lib/policy/service'
@@ -181,6 +182,20 @@ async function handle(rawRequest: Request, slug: string): Promise<Response> {
       service: 'not_executed',
       message:
         'Held for provider review. No payment was taken and the service was not executed. Retry with ?review=<reviewId> once approved.',
+    })
+  }
+
+  // ---- Settlement destination must be able to receive the asset. ----------
+  // Checked before any challenge exists, so a provider whose wallet has no trustline costs the
+  // payer nothing and gets a fix instead of a contract error after signing. An RPC failure is
+  // not an answer; the payment itself stays the authority then.
+  // A missing recipient is left to the payment phase, which already records it as a failure.
+  const recipient = settlementTargetForOrganization(service.organizationId)?.recipient
+  const receivable = recipient ? await recipientCanReceive(recipient, service.assetContract) : { ok: null }
+  if (receivable.ok === false) {
+    return problem(503, 'treasury_cannot_receive', receivabilityAdvice(receivable.reason, service.assetCode), {
+      decision: 'allow',
+      charged: false,
     })
   }
 
