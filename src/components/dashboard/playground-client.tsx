@@ -618,6 +618,16 @@ export function PlaygroundClient({
 
             {result ? (
               <>
+                {result.steps.some((s) => s.step === 'REVIEW_PENDING') ? (
+                  <p className="rounded-control border border-review/30 bg-review-soft px-3 py-2 text-[13px] leading-relaxed text-review">
+                    Your policy held this agent, and nothing was charged.{' '}
+                    <a href="/review" className="font-medium underline underline-offset-2">
+                      Approve it in Review
+                    </a>
+                    , then run the request again.
+                  </p>
+                ) : null}
+
                 {result.headers['x-pagesure-request-id'] ? (
                   <a
                     href={`/requests/${result.headers['x-pagesure-request-id']}`}
