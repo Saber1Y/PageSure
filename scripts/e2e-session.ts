@@ -501,6 +501,17 @@ async function run(): Promise<void> {
 
   await ensureSigner()
 
+  // The live price comes from the service being paid for, not from E2E_PRICE_BASE, which only
+  // sets the price `prepare` gives the demo service. Checked before opening, so a run whose
+  // funding cannot cover its requests fails without locking funds in a channel.
+  const service = db().select().from(schema.services).where(eq(schema.services.slug, SLUG)).get()
+  assert(service?.mode === 'channel' && service.status === 'live', `live channel service ${SLUG} not found`)
+  const expectedCumulative = BigInt(service.priceBase) * BigInt(REQUESTS)
+  assert(
+    BigInt(FUNDED_BASE) >= expectedCumulative,
+    `fundedBase=${FUNDED_BASE} cannot cover ${REQUESTS} requests at ${service.priceBase} each`,
+  )
+
   const payerUsdc = toBaseUnits(await usdcBalance(payer.publicKey()))
   assert(
     payerUsdc >= BigInt(FUNDED_BASE),
@@ -518,7 +529,7 @@ async function run(): Promise<void> {
   const row = db().select().from(schema.paymentSessions).where(eq(schema.paymentSessions.id, sessionId)).get()
   assert(row, 'session row vanished')
   assert(Number(row.requestCount) === REQUESTS, `expected ${REQUESTS} requests, DB has ${row.requestCount}`)
-  assert(row.cumulativeBase === (BigInt(PRICE_BASE) * BigInt(REQUESTS)).toString(), `cumulative mismatch: ${row.cumulativeBase}`)
+  assert(row.cumulativeBase === expectedCumulative.toString(), `cumulative mismatch: ${row.cumulativeBase}, expected ${expectedCumulative}`)
   process.stdout.write(`[e2e] DB: requestCount=${row.requestCount} cumulativeBase=${row.cumulativeBase} status=${row.status}\n`)
 
   console.log(`[e2e] settling through the org signer (submitting the recorded payer voucher)...`)
