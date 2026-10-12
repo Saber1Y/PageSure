@@ -50,6 +50,18 @@ const PRICE_BASE = process.env.E2E_PRICE_BASE ?? '100000'
 const FUNDED_BASE = process.env.E2E_FUNDED_BASE ?? '500000'
 const REQUESTS = Number(process.env.E2E_REQUESTS ?? 4)
 const REFUND_WAIT_SECONDS = Number(process.env.E2E_REFUND_WAIT_SECONDS ?? 120)
+/*
+ * Optional pause between requests, in milliseconds.
+ *
+ * Every request in this loop is delivered to the real upstream. The default of 0 keeps the
+ * historical behaviour (and the four-request evidence runs) exactly as it was. It exists
+ * because a scale run such as 147 requests fires back-to-back calls at a keyless or
+ * demo-tier upstream, which rate-limits and would record every later request as a
+ * charged-not-delivered incident - evidence about the upstream's quota, not about whether
+ * N requests settle in one close. Set it when running at a request count the upstream
+ * cannot absorb instantaneously.
+ */
+const REQUEST_DELAY_MS = Number(process.env.E2E_REQUEST_DELAY_MS ?? 0)
 
 const network = process.env.STELLAR_NETWORK ?? 'stellar:testnet'
 const rpcUrl = process.env.STELLAR_RPC_URL ?? ''
@@ -448,6 +460,7 @@ async function deliverRequests(sessionId: string, channelContract: string, count
     const cumulative = res.headers.get('X-Pagesure-Cumulative-Base') ?? '?'
     const body = JSON.parse(requestText) as { ok?: boolean; provider?: string; data?: unknown }
     receipts.push(`request ${i + 1}: status ${res.status} cumulativeBase=${cumulative} provider=${body.provider ?? '?'}`)
+    if (REQUEST_DELAY_MS > 0 && i < count - 1) await sleep(REQUEST_DELAY_MS)
   }
   return receipts
 }

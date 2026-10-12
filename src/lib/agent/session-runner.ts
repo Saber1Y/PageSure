@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import {
   Contract,
   Keypair,
@@ -347,15 +347,16 @@ export async function settleChannelSession(input: { slug: string; sessionId: str
 
 // ------------------------------------------------------------ signer lifecycle
 
-let spawnedSigner: ChildProcess | null = null
-
 function signerHttpUrl(): string {
   return process.env.SIGNER_HTTP_URL ?? `http://127.0.0.1:${process.env.SIGNER_PORT ?? '4457'}`
 }
 
 function signerToken(): string {
   const org = db().select().from(organizations).get()
-  const envName = org?.commitmentSignerTokenEnv ?? 'PAGESURE_SIGNER_PROOF'
+  // `||`, not `??`: the column holds the empty string rather than NULL for organizations
+  // that never configured a signer, and `??` would let "" through and then fail to find any
+  // environment variable named "", instead of falling back to the documented default.
+  const envName = org?.commitmentSignerTokenEnv || 'PAGESURE_SIGNER_PROOF'
   const token = process.env[envName] ?? process.env.SIGNER_TOKEN ?? ''
   if (!token) throw new Error(`${envName} is not set; the signer cannot be authenticated`)
   return token
@@ -386,22 +387,29 @@ async function ensureSigner(): Promise<void> {
     )
   }
   const token = signerToken()
-  const env = {
-    ...providerSignerEnvironment(process.env),
+  // providerSignerEnvironment strips AGENT_COMMITMENT_SEED from the child: the signer refuses
+  // to start if it can see the payer's commitment seed, and it is right to, because the
+  // provider must never hold the key that authorises withdrawal from the payer's own channel.
+  // The dev server carries that seed in its own environment, so it has to be removed from what
+  // the child inherits, not merely omitted from the overrides.
+  const env = providerSignerEnvironment({
+    ...process.env,
     SIGNER_PORT: process.env.SIGNER_PORT ?? '4457',
     SIGNER_TOKEN: token,
+    // The signer authorizes the close with the treasury account that receives the payout,
+    // which is the organization's settlement recipient.
     SIGNER_TREASURY_SECRET: process.env.SESSION_TREASURY_SECRET ?? '',
     SIGNER_RPC_URL: rpcUrl() ?? '',
     SIGNER_NETWORK: network(),
     PAGESURE_ORIGIN: internalOrigin(),
-  }
-  spawnedSigner = spawn('npx', ['tsx', 'scripts/signer-service.ts'], {
+  })
+  const child = spawn('npx', ['tsx', 'scripts/signer-service.ts'], {
     cwd: process.cwd(),
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  spawnedSigner.stdout?.on('data', (chunk) => process.stdout.write(`[signer] ${chunk}`))
-  spawnedSigner.stderr?.on('data', (chunk) => process.stderr.write(`[signer] ${chunk}`))
+  child.stdout?.on('data', (chunk) => process.stdout.write(`[signer] ${chunk}`))
+  child.stderr?.on('data', (chunk) => process.stderr.write(`[signer] ${chunk}`))
 
   const at = Date.now()
   while (Date.now() - at < 20_000) {

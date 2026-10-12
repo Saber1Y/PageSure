@@ -238,6 +238,25 @@ export async function runSearch(ctx: UpstreamContext): Promise<SearchResponse> {
 // ---------------------------------------------------------------------------
 
 const marketProviders = {
+  async local(ctx: UpstreamContext): Promise<MarketResponse> {
+    const provider = 'local'
+    const ids = ctx.search.get('ids') ?? String(ctx.config.coinGeckoIds ?? 'stellar')
+    const symbol = (ids.split(',')[0] ?? ids).trim().toUpperCase()
+    const price = Number(ctx.config.localPriceUsd ?? 0.1)
+    return {
+      provider,
+      quotes: [
+        {
+          symbol,
+          price,
+          change24h: 0,
+          venue: 'local',
+          asOf: new Date().toISOString(),
+        },
+      ],
+    }
+  },
+
   async coingecko(ctx: UpstreamContext): Promise<MarketResponse> {
     const provider = 'CoinGecko'
     const key = env('COINGECKO_API_KEY')
@@ -257,13 +276,16 @@ const marketProviders = {
       Record<string, number>
     >
 
-    const quotes: MarketQuote[] = Object.entries(payload).map(([id, entry]) => ({
-      symbol: id.toUpperCase(),
-      price: entry[vs] ?? 0,
-      change24h: entry[`${vs}_24h_change`] ?? null,
-      venue: 'CoinGecko',
-      asOf: new Date().toISOString(),
-    }))
+    const quotes: MarketQuote[] = Object.entries(payload).map(([id, entry]) => {
+      const change24h = entry[`${vs}_24h_change`]
+      return {
+        symbol: id.toUpperCase(),
+        price: entry[vs] ?? 0,
+        change24h: typeof change24h === 'number' ? change24h : null,
+        venue: 'CoinGecko',
+        asOf: new Date().toISOString(),
+      }
+    })
 
     // An empty result means the requested coin id does not exist. Say so, rather than
     // returning an empty list that reads like a successful quote fetch.
@@ -280,6 +302,9 @@ const marketProviders = {
 }
 
 export async function runMarket(ctx: UpstreamContext): Promise<MarketResponse> {
+  if (localFallbackEnabled()) {
+    return marketProviders.local(ctx)
+  }
   try {
     return await marketProviders.coingecko(ctx)
   } catch (error) {
