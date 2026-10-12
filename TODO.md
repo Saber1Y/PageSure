@@ -48,8 +48,12 @@ check has evidence attached.
   interrupted run below also recorded the upstream failure as charged-not-delivered.
 - [x] Close through the organization signer; the two runs below verified one close transaction
   pays the cumulative amount and the session, request, and settlement records agree.
-- [ ] Run the `147 requests → 1 close settlement` claim with enough channel funding, or revise
+- [x] Run the `147 requests → 1 close settlement` claim with enough channel funding, or revise
   the claim to the largest observed result. Keep open and close transaction hashes as evidence.
+  2026-10-12: session `ses_8e7a2bb7c00f4eab891e8199` delivered **150 requests** between open and
+  one close settlement (the funded capacity of a `15000000` base deposit at a 100,000 per-request
+  step), settling `1.5000000` USDC. Close
+  [transaction](https://stellar.expert/explorer/testnet/tx/0ceed63bb08b394d3eb6446437e8ae9d1cf14e5e3a82a26f4f41140bdc3e2806).
 - [x] Offline proofs verify policy block before voucher acceptance and no cumulative advance.
   The Testnet recovery run recorded a paid-but-undelivered voucher. The session API says the
   amount may be collected at close; request and incident screens now distinguish a payer
@@ -66,9 +70,11 @@ check has evidence attached.
   `300000` (including the failed delivery) was settled; the incident and failed request remain
   visible in the database. Open [transaction](https://stellar.expert/explorer/testnet/tx/04428a287e31d31c2b6a8a47e321fa986e34678f01c406bb7d86700c01b33da9); close
   [transaction](https://stellar.expert/explorer/testnet/tx/c0d6d934e70a436d6620fddcd2d4fbf5c1d25c810b2347e4a3dc9715bb088b1e).
-- The `147 requests → 1 close settlement` target remains unverified. Both runs emitted the SDK
-  warning that cumulative anti-reset protection uses no persistent store; keep deployment
-  single-process until persistent compare-and-set storage is implemented.
+- [x] The `147 requests → 1 close settlement` target is now verified on 2026-10-12 with 150
+  requests (see above). Both earlier runs emitted the SDK warning that cumulative anti-reset
+  protection uses no persistent store; a resume re-seeds the client store at the recorded
+  cumulative. Keep deployment single-process until persistent compare-and-set storage is
+  implemented (see the persistence evaluation item below).
 
 ## P1 — Make setup and operations repeatable
 
@@ -93,12 +99,24 @@ check has evidence attached.
 - [x] Prevent publishing a live session service until its verified treasury, signer HTTPS URL,
   configured signer token, and channel factory are present; operators can save drafts and get
   an explicit missing-setup message. `prove:services` passes 72 checks.
-- [ ] Add automated coverage for the HTTP gateway and browser-facing console, especially
-  payment retry, review approval, and incident recording.
+- [x] Add automated coverage for the HTTP gateway and browser-facing console, especially
+  payment retry, review approval, and incident recording. `prove:console`
+  (`scripts/prove-gateway-console.ts`) passes 91 checks: a paid retry settles once even
+  though the receipt carries the original challenge id (the two-request trap in
+  `src/lib/mpp/registry.ts` — the 402 attempt stays `challenged`, a new row is `paid`);
+  held wallets appear in the review console, approval writes a time-boxed grant the retry
+  uses without touching the allowlist, rejection writes nothing so the wallet is held
+  again; an organization cannot approve or see another's; mismatch and upstream failures
+  surface in the incidents console with payer, amount, and tx hash, org-scoped.
+  The console POST route itself stays lib-level (`currentUser()` needs a request context).
 - [x] Document charge-mode paid-but-undelivered resolution: reconcile the payment, contact the
   payer, handle any refund as a separate treasury transfer, retain the refund reference, and
   acknowledge only after resolution (`docs/charge-guide.md`).
-- [ ] Evaluate persistent atomic payment state before supporting multiple app instances.
+- [x] Evaluate persistent atomic payment state before supporting multiple app instances.
+  Decision recorded in `README.md` "Persistent atomic payment state — evaluation
+  (2026-10-12)": stay on `Store.memory()` + one process while the platform is single-process;
+  when scale-out is needed, implement a transaction-scoped `better-sqlite3` store behind the
+  existing `mppStore()` seam before adding any service.
 - [x] Set a bounded upstream timeout with caller cancellation; document that configured search
   providers may be fallback targets but the same provider is not retried automatically. Credentials
   are resolved per request and rotate with a coordinated restart. Separate HTTP-call idempotency

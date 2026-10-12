@@ -726,9 +726,32 @@ settled the exact payer-authorized cumulative of `300000` base units. Open
 [transaction](https://stellar.expert/explorer/testnet/tx/04428a287e31d31c2b6a8a47e321fa986e34678f01c406bb7d86700c01b33da9); close
 [transaction](https://stellar.expert/explorer/testnet/tx/c0d6d934e70a436d6620fddcd2d4fbf5c1d25c810b2347e4a3dc9715bb088b1e).
 
-The 147-request target remains unverified. The SDK warned that this runner's cumulative anti-reset
-state is in memory and will not survive process restarts; keep channel mode single-process until
-persistent compare-and-set storage is implemented.
+#### Observed testnet run — 2026-10-12: 150 requests, one close
+
+A resumed run against the local market provider delivered **150 requests from channel open to one
+close settlement**, matching the 147-request target (150 was the exact funded-capacity of the
+channel: funded `15000000` base units at a `100000` per-request cumulative step). Session
+`ses_8e7a2bb7c00f4eab891e8199`, channel
+[`CDYCTKXYUFROO7VLRVJBWQFER4FIPNLDWF4ZA5TSDTYY5ZQP2YMKT4BU`](https://stellar.expert/explorer/testnet/contract/CDYCTKXYUFROO7VLRVJBWQFER4FIPNLDWF4ZA5TSDTYY5ZQP2YMKT4BU).
+The first 122 requests had succeeded against the CoinGecko market before a transient RPC
+on-chain-state check failed at request 123 (HTTP 402 `verification-failed`); the resumed client
+re-seeded its local cumulative store at `12200000` and delivered the remaining 28 requests. The
+final close settled the exact payer-authorized cumulative of `15000000` base units = `1.5000000`
+USDC. Treasury balance rose by that exact amount. Close
+[transaction](https://stellar.expert/explorer/testnet/tx/0ceed63bb08b394d3eb6446437e8ae9d1cf14e5e3a82a26f4f41140bdc3e2806).
+
+Two findings from this run:
+
+- The channel correctly refuses to sign vouchers beyond the funded deposit: request 151 (which
+  would have taken the cumulative to `15100000 > 15000000` funded) returned HTTP 402. The
+  `fundedBase` value is a hard upper bound on cumulative, so a session cannot overdraw its escrow.
+- `e2e-session.ts`'s in-memory cumulative anti-reset state does not survive a process restart. A
+  resume must re-seed the client channel store (`Store.memory()` pre-populated with the recorded
+  `cumulative_base` under `stellar:channel:client:<network>:<channel>:cumulative`) before the first
+  new request. Keep channel mode single-process until persistent compare-and-set storage is
+  implemented; see [TODO L101](../TODO.md).
+
+See [the channel lifecycle guide](./channel-lifecycle.md) for the open/confirm/close flow.
 
 ## Part 6 - Read the console
 
@@ -1096,7 +1119,7 @@ They need no configuration, no wallet, and no network.
 | -------------------------- | ------ | -------------------------------------------------- |
 | `npm run prove:policies`   | 87     | policy creation, caps, allow and deny lists        |
 | `npm run prove:charge`     | 68     | the paid path: delivery, receipt, incidents        |
-| `npm run prove:services`   | 68     | service creation, slugs, prices, policy binding    |
+| `npm run prove:services`   | 72     | service creation, slugs, prices, policy binding    |
 | `npm run prove:isolation`  | 55     | no cross-tenant reads or writes                    |
 | `npm run prove:email`      | 58     | sign-in tokens, invitations, mail delivery failure |
 | `npm run prove:settlement` | 59     | intent claim, settlement refusals, close gate      |
@@ -1105,14 +1128,19 @@ They need no configuration, no wallet, and no network.
 | `npm run prove:signer`     | 20     | signer policy and transport                        |
 | `npm run prove:commitment` | 20     | commitment construction                            |
 | `npm run prove:upgrade`    | 13     | migrating a populated older database               |
-| **Total**                  | **502**|                                                    |
+| `npm run prove:upstream`   | 5      | upstream deadline and no same-provider retry       |
+| `npm run prove:console`    | 91     | gateway retry, review approval, incident console   |
+| **Total**                  | **602**|                                                    |
 
 Expect `N passed, 0 failed` from each, where `N` matches the table.
 If a count differs, the suite changed: read the diff rather than adjusting the expectation to
 match.
 
-Note what these suites do **not** cover: the gateway, the policy engine and the console screens.
-Those are Parts 1 to 7 above, and they are manual.
+Note what these suites still do **not** cover: the console **session flows** the gateway persists
+live on-chain (session open, voucher, settle, close; see Part 8), the console **POST** routes that
+need a signed-in user (`currentUser()` reads the session cookie, which only exists inside a request
+context — `prove:console` therefore exercises `resolveReview` with the same arguments the route
+passes), and the rendered screens themselves. Those paths are manual in this guide.
 
 ```bash
 npm run mpp:audit
@@ -1222,10 +1250,11 @@ Stated plainly, because a test guide that overstates itself is worse than none.
   seeded organization's treasury has not been verified; do not mark charge mode live-verified
   until `npm run e2e:charge` completes and its transaction is recorded here.
 
-- **The full channel throughput claim remains unproven.** A funded channel, four delivered
-  requests, one close settlement, and a charged-not-delivered recovery were observed on Testnet.
-  `147 delivered requests between open and one close settlement` remains the target and has not
-  been observed.
+- **The full channel throughput claim was proven on 2026-10-12.** A funded channel delivered
+  **150 requests between open and one close settlement** (session `ses_8e7a2bb7c00f4eab891e8199`,
+  close tx `0ceed63bb08b394d3eb6446437e8ae9d1cf14e5e3a82a26f4f41140bdc3e2806`), satisfying the
+  `147 delivered requests between open and one close settlement` target. See
+  [the Part 5 testnet run record](#observed-testnet-run--2026-10-12-150-requests-one-close).
 
 - **The wallet flows in Part 9 have not been exercised end to end.**
   Freighter is unavailable in the headless environment these checks ran in, so they rest on

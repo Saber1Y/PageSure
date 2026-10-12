@@ -180,6 +180,43 @@ For a multi-instance deployment, swap the store for one with real CAS (`Store.re
 `Store.upstash()`, or a Postgres conditional `UPDATE … WHERE`). Out of scope here, documented so
 the constraint is not lost.
 
+### Persistent atomic payment state — evaluation (2026-10-12)
+
+The `update` callbacks PageSure relies on are the MPP replay gates in
+`mppx/dist/tempo/server/Charge.js` and the channel cumulative gate in
+`mppx/dist/tempo/server/Session.js`. Their semantics are the same shape in every case: `fn`
+receives the current value, returns a `Change` (`noop`/`set`/`delete`), and the store applies it
+atomically or not at all. The keys that must be linearizable are:
+
+- charge: `mppx:charge:<txhash>` (mark-hash-used), `mppx:charge:sponsor:<chain>:<sender>`
+  (sponsor-in-flight), `mppx:charge:proof:<challengeId>` (proof-used).
+- channel: the per-channel cumulative key (client store:
+  `stellar:channel:client:<network>:<channel>:cumulative`; server-side equivalent in Session.js).
+
+Options, ordered by fit for this codebase:
+
+1. **`Store.memory()` + one process (current).** Correct and zero-moving-parts, but the anti-reset
+   baseline is lost on restart (observed in the 2026-10-12 channel run), and horizontal scale-out
+   is impossible. `prove:*` already proves the full surface on one process.
+2. **`better-sqlite3`-backed store.** This dependency is already present and the database is
+   already WAL. `update` becomes one conditional write inside a transaction: `BEGIN IMMEDIATE;
+   SELECT current; run fn; apply via INSERT/UPDATE/DELETE with the row as the guard; COMMIT`.
+   `better-sqlite3` is single-writer by design, so one process holds the writer role and N
+   processes can read - atomicity is preserved because the conditional write either commits or
+   not. No new runtime dependency; survives restart. This is the smallest step that removes the
+   "single process" constraint without adding a service.
+3. **`Store.redis()` / `Store.upstash()`.** Real CAS with an existing adapter, but adds a
+   service/secret and a second source of failure; justified only when scale-out forces it.
+4. **Postgres conditional `UPDATE … WHERE`.** Same CAS guarantee with the operational cost of a
+   database server; the right choice if the rest of the product is ever migrated off SQLite.
+
+Decision: stay on `Store.memory()` + one process while the platform is a single long-running
+Node process. When multiple instances are needed, implement option 2 first (a transaction-scoped
+SQLite store behind the existing `mppStore()` seam) because it is the only option that reuses
+dependencies already in this repository. Redis/Upstash/Postgres are deferred until a concrete
+multi-writer or scale requirement exists. See `src/lib/mpp/registry.ts` `mppStore()` for the
+single seam that would switch.
+
 `better-sqlite3` is a native module, so deployment also needs a Node server or a Docker image
 with build tooling.
 
