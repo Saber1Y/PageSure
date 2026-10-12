@@ -10,6 +10,7 @@ import {
   scValToNative,
 } from '@stellar/stellar-sdk'
 import { Mppx, channel as clientChannel } from '@stellar/mpp/channel/client'
+import { Store } from 'mppx'
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
 import { organizations, paymentSessions } from '@/lib/db/schema'
@@ -233,6 +234,31 @@ export async function sendChannelRequests(input: {
   count: number
 }): Promise<{ receipts: RequestReceipt[]; steps: SessionStep[] }> {
   const steps: SessionStep[] = []
+
+  // The channel client signs `local baseline + price` and saves the result as its new baseline
+  // the moment it signs, before the gateway has accepted anything. Two consequences for a demo
+  // payer that lives in this process:
+  //
+  //   - a fresh client starts at 0, so a second batch on the same session signs less than the
+  //     session already holds and is refused;
+  //   - a refused voucher still moves the baseline forward, and the gateway accepts a voucher
+  //     that skips ahead and bills the difference, so the next request would be charged twice.
+  //
+  // So the baseline is seeded from the session row, which records exactly the cumulative this
+  // payer last signed and the gateway accepted, and re-read after every attempt. It is only ever
+  // set to a value the payer itself signed.
+  const store = Store.memory()
+  const baselineKey = `stellar:channel:client:${network()}:${input.channelContract}:cumulative`
+  const syncBaseline = async (): Promise<void> => {
+    const session = db()
+      .select({ cumulativeBase: paymentSessions.cumulativeBase })
+      .from(paymentSessions)
+      .where(eq(paymentSessions.channelContract, input.channelContract))
+      .get()
+    await store.put(baselineKey, { amount: session?.cumulativeBase ?? '0' })
+  }
+  await syncBaseline()
+
   const mppx = Mppx.create({
     polyfill: false,
     methods: [
@@ -241,22 +267,36 @@ export async function sendChannelRequests(input: {
         rpcUrl: rpcUrl(),
         network: network(),
         allowedChannels: [input.channelContract],
+        store,
       }),
     ],
   })
 
   const origin = internalOrigin()
+  const send = (index: number) =>
+    mppx.fetch(`${origin}/v1/${input.slug}`, {
+      method: 'POST',
+      // The gateway needs the channel to find the session on the first request, before
+      // any signed credential exists; later requests carry the credential itself.
+      headers: { 'content-type': 'application/json', 'x-pagesure-channel': input.channelContract },
+      body: JSON.stringify({ message: `playground request ${index}`, externalId: `${input.channelContract}-${Date.now()}-${index}` }),
+    })
+
   const receipts: RequestReceipt[] = []
   for (let i = 0; i < input.count; i++) {
     const index = i + 1
     try {
-      const res = await mppx.fetch(`${origin}/v1/${input.slug}`, {
-        method: 'POST',
-        // The gateway needs the channel to find the session on the first request, before
-        // any signed credential exists; later requests carry the credential itself.
-        headers: { 'content-type': 'application/json', 'x-pagesure-channel': input.channelContract },
-        body: JSON.stringify({ message: `playground request ${index}`, externalId: `${input.channelContract}-${Date.now()}-${index}` }),
-      })
+      let res = await send(index)
+      // The gateway's on-chain channel check fails closed when the RPC response cannot be
+      // read, which happens intermittently on Testnet. Nothing advanced, so after resetting the
+      // baseline the same request is retried once, a ledger later.
+      if (res.status === 402) {
+        await res.body?.cancel()
+        await syncBaseline()
+        steps.push({ step: 'REQUEST', detail: `Request ${index}: voucher refused, retrying once`, at: Date.now() })
+        await new Promise((resolve) => setTimeout(resolve, 6_000))
+        res = await send(index)
+      }
       const text = await res.text()
       let body: unknown = text
       try {
@@ -280,6 +320,9 @@ export async function sendChannelRequests(input: {
       steps.push({ step: 'FAILED', detail: `Request ${index}: ${message}`, at: Date.now() })
       receipts.push({ index, ok: false, status: 0, cumulativeBase: null, provider: null, body: null, error: message })
     }
+    // Whatever happened, the next voucher builds on what the gateway recorded: the refused
+    // amount when nothing advanced, or the authorized amount after an upstream failure.
+    await syncBaseline()
   }
   return { receipts, steps }
 }
