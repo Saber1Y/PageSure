@@ -547,7 +547,13 @@ export function PlaygroundClient({
                 : transportError
                   ? 'Request failed before reaching the gateway'
                   : result
-                    ? `Request finished with ${result.steps.length} lifecycle steps${result.ok ? '' : ', the gateway reported an error'}`
+                    ? `Request finished with ${result.steps.length} lifecycle steps${
+                        result.ok
+                          ? ''
+                          : result.steps.some((s) => s.step === 'REVIEW_PENDING')
+                            ? ', held for review and not charged'
+                            : ', the gateway reported an error'
+                      }`
                     : ''}
             </p>
 
